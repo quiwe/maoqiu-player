@@ -4,6 +4,37 @@
 <dict>
     <key>CFBundleDisplayName</key>
     <string>毛球播放器</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>MaoqiuPlayer Media Package</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.maoqiu.player.mqp</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeDescription</key>
+            <string>MaoqiuPlayer Media Package</string>
+            <key>UTTypeIdentifier</key>
+            <string>com.maoqiu.player.mqp</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>mqp</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>用于扫描本机视频和图片导入媒体库</string>
     <key>UILaunchScreen</key>
     <dict/>
 </dict>
