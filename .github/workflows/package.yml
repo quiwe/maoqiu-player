@@ -257,23 +257,30 @@ jobs:
           set -euo pipefail
           ls -lh release-assets
           PREVIOUS_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 20 --json tagName --jq '[.[].tagName | select(. != env.TAG_NAME)][0] // ""')
+          NOTE_FILE="docs/release-notes/${TAG_NAME}.md"
           {
             echo "## 更新内容"
             echo
-            if [ -n "$PREVIOUS_TAG" ]; then
-              git log --pretty=format:"- %s (%h)" "$PREVIOUS_TAG..$TAG_NAME"
+            if [ -f "$NOTE_FILE" ]; then
+              cat "$NOTE_FILE"
             else
-              git log --pretty=format:"- %s (%h)" "$TAG_NAME"
+              if [ -n "$PREVIOUS_TAG" ]; then
+                UPDATE_COUNT=$(git rev-list --count "$PREVIOUS_TAG..$TAG_NAME")
+              else
+                UPDATE_COUNT=$(git rev-list --count "$TAG_NAME")
+              fi
+              echo "- 本次版本包含 ${UPDATE_COUNT} 个提交更新，详细提交记录可在仓库提交历史中查看。"
+              echo "- 已重新生成所有平台安装包，并同步上传到本次 Release。"
             fi
             echo
             echo
             echo "## 安装包"
             echo
-            echo "- macOS: MaoqiuPlayer-macOS.dmg (contains MaoqiuPlayer-macOS.pkg installer)"
-            echo "- Windows: MaoqiuPlayer-Windows-Setup.exe"
-            echo "- Linux: maoqiu-player_0.1.5_amd64.deb"
-            echo "- Android: MaoqiuPlayer-Android.apk"
-            echo "- iOS: MaoqiuPlayer-iOS.ipa (unsigned)"
+            echo "- macOS：MaoqiuPlayer-macOS.dmg（内含 MaoqiuPlayer-macOS.pkg 安装器）"
+            echo "- Windows：MaoqiuPlayer-Windows-Setup.exe"
+            echo "- Linux：maoqiu-player_0.1.5_amd64.deb"
+            echo "- Android：MaoqiuPlayer-Android.apk"
+            echo "- iOS：MaoqiuPlayer-iOS.ipa（未签名）"
             echo
             echo "注意：当前包未做代码签名、公证或移动端商店签名。iOS IPA 为未签名构建，需要开发者证书后才能安装到真机。"
           } > release-notes.md
