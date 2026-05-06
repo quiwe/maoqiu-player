@@ -362,7 +362,6 @@ public class MainActivity extends Activity {
         page.addView(header(item.name, v -> showLibrary(currentFilter)));
 
         VideoView video = new VideoView(this);
-        video.setBackgroundColor(Color.BLACK);
         MediaController controller = new MediaController(this);
         controller.setAnchorView(video);
         video.setMediaController(controller);
