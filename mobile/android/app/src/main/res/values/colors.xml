@@ -1,0 +1,6 @@
+<resources>
+    <color name="maoqiu_background">#111214</color>
+    <color name="maoqiu_surface">#202226</color>
+    <color name="maoqiu_accent">#2FA88F</color>
+    <color name="maoqiu_text">#F4F1EA</color>
+</resources>

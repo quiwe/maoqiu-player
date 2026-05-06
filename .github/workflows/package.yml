@@ -13,7 +13,7 @@ permissions:
   actions: read
 
 jobs:
-  package:
+  desktop:
     name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -25,10 +25,10 @@ jobs:
             package_name: MaoqiuPlayer-macOS.dmg
           - os: windows-latest
             artifact_name: MaoqiuPlayer-Windows
-            package_name: MaoqiuPlayer-Windows.exe
+            package_name: MaoqiuPlayer-Windows-Setup.exe
           - os: ubuntu-latest
             artifact_name: MaoqiuPlayer-Linux
-            package_name: MaoqiuPlayer-Linux.tar.gz
+            package_name: maoqiu-player_0.1.3_amd64.deb
 
     steps:
       - name: Checkout
@@ -56,7 +56,8 @@ jobs:
             libxcb-shape0 \
             libxcb-xinerama0 \
             libxcb-xfixes0 \
-            libpulse0
+            libpulse0 \
+            fakeroot
 
       - name: Install dependencies
         run: |
@@ -69,30 +70,62 @@ jobs:
 
       - name: Build macOS app
         if: runner.os == 'macOS'
-        run: pyinstaller --noconfirm --clean --windowed --name MaoqiuPlayer main.py
+        run: pyinstaller --noconfirm --clean --windowed --name MaoqiuPlayer --icon assets/icons/maoqiu-player.icns --add-data "assets:assets" main.py
 
       - name: Build Windows app
         if: runner.os == 'Windows'
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name MaoqiuPlayer main.py
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name MaoqiuPlayer --icon assets/icons/maoqiu-player.ico --add-data "assets;assets" main.py
 
       - name: Build Linux app
         if: runner.os == 'Linux'
-        run: pyinstaller --noconfirm --clean --onedir --name MaoqiuPlayer main.py
+        run: pyinstaller --noconfirm --clean --onedir --name MaoqiuPlayer --add-data "assets:assets" main.py
 
       - name: Create macOS DMG
         if: runner.os == 'macOS'
         run: hdiutil create -volname MaoqiuPlayer -srcfolder dist/MaoqiuPlayer.app -ov -format UDZO "${{ matrix.package_name }}"
 
-      - name: Prepare Windows executable
+      - name: Install Inno Setup
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Copy-Item dist/MaoqiuPlayer.exe "${{ matrix.package_name }}"
+        run: choco install innosetup --no-progress -y
 
-      - name: Create Linux tarball
+      - name: Create Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-installer | Out-Null
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\windows\MaoqiuPlayer.iss
+          Copy-Item dist-installer\MaoqiuPlayer-Windows-Setup.exe "${{ matrix.package_name }}"
+
+      - name: Create Linux DEB installer
         if: runner.os == 'Linux'
         run: |
-          cd dist
-          tar -czf "../${{ matrix.package_name }}" MaoqiuPlayer
+          set -euo pipefail
+          PKG_ROOT="dist-deb/maoqiu-player"
+          mkdir -p "$PKG_ROOT/DEBIAN" "$PKG_ROOT/opt/MaoqiuPlayer" "$PKG_ROOT/usr/share/applications" "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps"
+          cp -R dist/MaoqiuPlayer/* "$PKG_ROOT/opt/MaoqiuPlayer/"
+          cp assets/icons/maoqiu-player-256.png "$PKG_ROOT/usr/share/icons/hicolor/256x256/apps/maoqiu-player.png"
+          cat > "$PKG_ROOT/usr/share/applications/maoqiu-player.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=MaoqiuPlayer
+          Name[zh_CN]=毛球播放器
+          Exec=/opt/MaoqiuPlayer/MaoqiuPlayer
+          Icon=maoqiu-player
+          Categories=AudioVideo;Player;
+          Terminal=false
+          DESKTOP
+          cat > "$PKG_ROOT/DEBIAN/control" <<'CONTROL'
+          Package: maoqiu-player
+          Version: 0.1.3
+          Section: video
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Maoqiu <quiwe@qq.com>
+          Description: MaoqiuPlayer local media player
+           MaoqiuPlayer is a cross-platform local media player for videos, images, media library management, and private media packages.
+          CONTROL
+          fakeroot dpkg-deb --build "$PKG_ROOT" "${{ matrix.package_name }}"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
@@ -101,13 +134,107 @@ jobs:
           path: ${{ matrix.package_name }}
           if-no-files-found: error
 
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build APK
+        working-directory: mobile/android
+        run: gradle :app:assembleRelease
+
+      - name: Prepare APK
+        run: cp mobile/android/app/build/outputs/apk/release/app-release.apk MaoqiuPlayer-Android.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaoqiuPlayer-Android
+          path: MaoqiuPlayer-Android.apk
+          if-no-files-found: error
+
+  ios:
+    name: Build unsigned iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: mobile/ios
+        run: xcodegen generate
+
+      - name: Build unsigned app
+        working-directory: mobile/ios
+        run: |
+          xcodebuild \
+            -project MaoqiuPlayer.xcodeproj \
+            -scheme MaoqiuPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: mobile/ios
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/MaoqiuPlayer.app"
+          test -n "$APP_PATH"
+          test -d "$APP_PATH"
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r ../../MaoqiuPlayer-iOS.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaoqiuPlayer-iOS
+          path: MaoqiuPlayer-iOS.ipa
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: package
+    needs: [desktop, android, ios]
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download packages
         uses: actions/download-artifact@v4
         with:
@@ -122,11 +249,33 @@ jobs:
         run: |
           set -euo pipefail
           ls -lh release-assets
+          PREVIOUS_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 20 --json tagName --jq '[.[].tagName | select(. != env.TAG_NAME)][0] // ""')
+          {
+            echo "## 更新内容"
+            echo
+            if [ -n "$PREVIOUS_TAG" ]; then
+              git log --pretty=format:"- %s (%h)" "$PREVIOUS_TAG..$TAG_NAME"
+            else
+              git log --pretty=format:"- %s (%h)" "$TAG_NAME"
+            fi
+            echo
+            echo
+            echo "## 安装包"
+            echo
+            echo "- macOS: MaoqiuPlayer-macOS.dmg"
+            echo "- Windows: MaoqiuPlayer-Windows-Setup.exe"
+            echo "- Linux: maoqiu-player_0.1.3_amd64.deb"
+            echo "- Android: MaoqiuPlayer-Android.apk"
+            echo "- iOS: MaoqiuPlayer-iOS.ipa (unsigned)"
+            echo
+            echo "注意：当前包未做代码签名、公证或移动端商店签名。iOS IPA 为未签名构建，需要开发者证书后才能安装到真机。"
+          } > release-notes.md
           if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
           else
             gh release create "$TAG_NAME" release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
               --title "MaoqiuPlayer $TAG_NAME" \
-              --notes "MaoqiuPlayer $TAG_NAME packaged by GitHub Actions. Includes macOS DMG, Windows EXE, and Linux tar.gz builds."
+              --notes-file release-notes.md
           fi

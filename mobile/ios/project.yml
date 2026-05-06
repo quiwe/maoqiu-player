@@ -1,0 +1,19 @@
+name: MaoqiuPlayer
+options:
+  bundleIdPrefix: com.maoqiu
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  MaoqiuPlayer:
+    type: application
+    platform: iOS
+    sources:
+      - MaoqiuPlayer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.maoqiu.player
+        INFOPLIST_FILE: MaoqiuPlayer/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "0.1.3"
+        CURRENT_PROJECT_VERSION: "3"
+        TARGETED_DEVICE_FAMILY: "1"

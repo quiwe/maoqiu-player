@@ -9,3 +9,14 @@ dist/
 build/
 *.spec
 .maoqiu-player/
+*.egg-info/
+*.apk
+*.deb
+*.dmg
+*.ipa
+dist-installer/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/ios/*.xcodeproj/
+mobile/ios/Payload/
