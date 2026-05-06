@@ -22,13 +22,13 @@ jobs:
         include:
           - os: macos-latest
             artifact_name: MaoqiuPlayer-macOS
-            archive_name: MaoqiuPlayer-macOS.zip
+            package_name: MaoqiuPlayer-macOS.dmg
           - os: windows-latest
             artifact_name: MaoqiuPlayer-Windows
-            archive_name: MaoqiuPlayer-Windows.zip
+            package_name: MaoqiuPlayer-Windows.exe
           - os: ubuntu-latest
             artifact_name: MaoqiuPlayer-Linux
-            archive_name: MaoqiuPlayer-Linux.zip
+            package_name: MaoqiuPlayer-Linux.tar.gz
 
     steps:
       - name: Checkout
@@ -67,29 +67,38 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
-      - name: Build app
+      - name: Build macOS app
+        if: runner.os == 'macOS'
         run: pyinstaller --noconfirm --clean --windowed --name MaoqiuPlayer main.py
 
-      - name: Archive macOS app
-        if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent dist/MaoqiuPlayer.app "${{ matrix.archive_name }}"
+      - name: Build Windows app
+        if: runner.os == 'Windows'
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name MaoqiuPlayer main.py
 
-      - name: Archive Windows app
+      - name: Build Linux app
+        if: runner.os == 'Linux'
+        run: pyinstaller --noconfirm --clean --onedir --name MaoqiuPlayer main.py
+
+      - name: Create macOS DMG
+        if: runner.os == 'macOS'
+        run: hdiutil create -volname MaoqiuPlayer -srcfolder dist/MaoqiuPlayer.app -ov -format UDZO "${{ matrix.package_name }}"
+
+      - name: Prepare Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/MaoqiuPlayer -DestinationPath "${{ matrix.archive_name }}"
+        run: Copy-Item dist/MaoqiuPlayer.exe "${{ matrix.package_name }}"
 
-      - name: Archive Linux app
+      - name: Create Linux tarball
         if: runner.os == 'Linux'
         run: |
           cd dist
-          zip -r "../${{ matrix.archive_name }}" MaoqiuPlayer
+          tar -czf "../${{ matrix.package_name }}" MaoqiuPlayer
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.archive_name }}
+          path: ${{ matrix.package_name }}
           if-no-files-found: error
 
   release:
@@ -114,10 +123,10 @@ jobs:
           set -euo pipefail
           ls -lh release-assets
           if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" release-assets/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG_NAME" release-assets/*.zip \
+            gh release create "$TAG_NAME" release-assets/* \
               --repo "$GITHUB_REPOSITORY" \
               --title "MaoqiuPlayer $TAG_NAME" \
-              --notes "MaoqiuPlayer $TAG_NAME packaged by GitHub Actions. Includes macOS, Windows, and Linux builds."
+              --notes "MaoqiuPlayer $TAG_NAME packaged by GitHub Actions. Includes macOS DMG, Windows EXE, and Linux tar.gz builds."
           fi
