@@ -43,8 +43,10 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.MediaController;
 import android.widget.ScrollView;
+import android.widget.HorizontalScrollView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
@@ -175,33 +177,100 @@ public class MainActivity extends Activity {
         setFullscreen(false);
 
         LinearLayout page = page();
-        page.addView(title("毛球播放器", "MaoqiuPlayer"));
 
-        LinearLayout searchRow = row();
-        EditText search = input("搜索本地媒体");
-        Button searchButton = button("搜索");
-        searchButton.setOnClickListener(v -> {
+        // B站风格大标题 + 副标题
+        LinearLayout titleBox = new LinearLayout(this);
+        titleBox.setOrientation(LinearLayout.VERTICAL);
+        titleBox.setPadding(0, dp(8), 0, dp(16));
+        TextView mainTitle = text("毛球播放器", 28, true);
+        TextView subTitle = text("MaoqiuPlayer · 你的本地媒体中心", 14, false);
+        subTitle.setTextColor(subtextColor());
+        titleBox.addView(mainTitle);
+        titleBox.addView(subTitle);
+        page.addView(titleBox);
+
+        // 分割线
+        View divider = new View(this);
+        divider.setBackgroundColor(dividerColor());
+        divider.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+        page.addView(divider);
+
+        // 搜索栏 - 圆角搜索框
+        LinearLayout searchBar = new LinearLayout(this);
+        searchBar.setOrientation(LinearLayout.HORIZONTAL);
+        searchBar.setGravity(Gravity.CENTER_VERTICAL);
+        searchBar.setPadding(dp(14), 0, dp(14), 0);
+        searchBar.setBackground(rounded(inputBgColor(), dp(22), inputStroke()));
+        searchBar.setLayoutParams(matchWithTop(dp(18)));
+        TextView searchIcon = text("🔍", 16, false);
+        EditText search = new EditText(this);
+        search.setHint("搜索本地媒体");
+        search.setSingleLine(true);
+        search.setInputType(InputType.TYPE_CLASS_TEXT);
+        search.setTextColor(textColor());
+        search.setHintTextColor(hintColor());
+        search.setTextSize(15);
+        search.setBackground(null);
+        search.setPadding(dp(8), dp(12), dp(8), dp(12));
+        search.setOnEditorActionListener((v, actionId, event) -> {
             currentQuery = search.getText().toString().trim();
             showLibrary("all");
+            return true;
         });
-        searchRow.addView(search, new LinearLayout.LayoutParams(0, dp(46), 1));
-        searchRow.addView(searchButton, wrapWithLeft(dp(10)));
-        page.addView(searchRow);
+        searchBar.addView(searchIcon);
+        searchBar.addView(search, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        page.addView(searchBar);
 
-        page.addView(section("主要入口"));
-        page.addView(card("最近播放", recent.size() + " 个项目", v -> showRecent()));
-        page.addView(card("本地视频", countKind(KIND_VIDEO) + " 个视频", v -> showLibrary(KIND_VIDEO)));
-        page.addView(card("本地图片", countKind(KIND_IMAGE) + " 张图片", v -> showLibrary(KIND_IMAGE)));
-        page.addView(card("播放列表", library.size() + " 个已导入项目", v -> showPlaylist()));
-        page.addView(card("打开媒体", "选择视频、图片或 .mqp 媒体包", v -> openMediaPicker(REQ_OPEN_MEDIA, false)));
-        page.addView(card("设置", "播放、媒体库、缓存和关于", v -> showSettings()));
+        // 功能入口 - 2列网格
+        page.addView(section("主要功能"));
+        String[][] gridItems = {
+            {"🕐", "最近播放", recent.size() + " 个项目"},
+            {"🎬", "本地视频", countKind(KIND_VIDEO) + " 个视频"},
+            {"🖼️", "本地图片", countKind(KIND_IMAGE) + " 张图片"},
+            {"📋", "播放列表", library.size() + " 个已导入"},
+            {"📂", "打开媒体", "视频、图片或 .mqp"},
+            {"⚙️", "设置", "播放、缓存和关于"}
+        };
+        View.OnClickListener[] gridListeners = {
+            v -> showRecent(),
+            v -> showLibrary(KIND_VIDEO),
+            v -> showLibrary(KIND_IMAGE),
+            v -> showPlaylist(),
+            v -> openMediaPicker(REQ_OPEN_MEDIA, false),
+            v -> showSettings()
+        };
+        for (int i = 0; i < gridItems.length; i += 2) {
+            LinearLayout gridRow = new LinearLayout(this);
+            gridRow.setOrientation(LinearLayout.HORIZONTAL);
+            gridRow.setLayoutParams(matchWithTop(dp(10)));
+            gridRow.addView(gridCard(gridItems[i][0], gridItems[i][1], gridItems[i][2], gridListeners[i]),
+                    new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            if (i + 1 < gridItems.length) {
+                gridRow.addView(gridCard(gridItems[i + 1][0], gridItems[i + 1][1], gridItems[i + 1][2], gridListeners[i + 1]),
+                        gridCardRightParams());
+            } else {
+                // Placeholder for odd count
+                View placeholder = new View(this);
+                gridRow.addView(placeholder, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            }
+            page.addView(gridRow);
+        }
 
+        // 最近播放 - 横滑卡片
         if (!recent.isEmpty()) {
             page.addView(section("继续播放"));
-            for (int i = 0; i < Math.min(3, recent.size()); i++) {
+            HorizontalScrollView hScroll = new HorizontalScrollView(this);
+            hScroll.setHorizontalScrollBarEnabled(false);
+            hScroll.setLayoutParams(matchWithTop(dp(4)));
+            LinearLayout hList = new LinearLayout(this);
+            hList.setOrientation(LinearLayout.HORIZONTAL);
+            hList.setPadding(0, 0, dp(18), 0);
+            for (int i = 0; i < Math.min(8, recent.size()); i++) {
                 MediaItem item = recent.get(i);
-                page.addView(mediaRow(item, recent, i));
+                hList.addView(recentCard(item, recent, i));
             }
+            hScroll.addView(hList);
+            page.addView(hScroll);
         }
 
         setScrollableContent(page);
@@ -242,6 +311,48 @@ public class MainActivity extends Activity {
         LinearLayout page = page();
         page.addView(header(libraryTitle(filter), v -> showHome()));
 
+        // 圆角搜索栏
+        LinearLayout searchBar = new LinearLayout(this);
+        searchBar.setOrientation(LinearLayout.HORIZONTAL);
+        searchBar.setGravity(Gravity.CENTER_VERTICAL);
+        searchBar.setPadding(dp(14), 0, dp(14), 0);
+        searchBar.setBackground(rounded(inputBgColor(), dp(22), inputStroke()));
+        searchBar.setLayoutParams(matchWithTop(dp(8)));
+        TextView searchIcon = text("🔍", 16, false);
+        EditText query = new EditText(this);
+        query.setHint("搜索名称");
+        query.setSingleLine(true);
+        query.setInputType(InputType.TYPE_CLASS_TEXT);
+        query.setTextColor(textColor());
+        query.setHintTextColor(hintColor());
+        query.setTextSize(15);
+        query.setBackground(null);
+        query.setPadding(dp(8), dp(12), dp(8), dp(12));
+        query.setText(currentQuery);
+        query.setOnEditorActionListener((v, actionId, event) -> {
+            currentQuery = query.getText().toString().trim();
+            showLibrary(currentFilter);
+            return true;
+        });
+        searchBar.addView(searchIcon);
+        searchBar.addView(query, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        page.addView(searchBar);
+
+        // 胶囊标签 - 筛选按钮
+        HorizontalScrollView chipScroll = new HorizontalScrollView(this);
+        chipScroll.setHorizontalScrollBarEnabled(false);
+        chipScroll.setLayoutParams(matchWithTop(dp(12)));
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.setPadding(0, 0, dp(18), 0);
+        String[][] chipData = {{"all", "全部"}, {KIND_VIDEO, "视频"}, {KIND_IMAGE, "图片"}, {KIND_PACKAGE, "媒体包"}};
+        for (String[] cd : chipData) {
+            chips.addView(chipButton(cd[1], cd[0].equals(filter), v -> showLibrary(cd[0])));
+        }
+        chipScroll.addView(chips);
+        page.addView(chipScroll);
+
+        // 操作按钮行
         LinearLayout actions = row();
         Button open = button("打开媒体");
         open.setOnClickListener(v -> openMediaPicker(REQ_OPEN_MEDIA, false));
@@ -254,14 +365,13 @@ public class MainActivity extends Activity {
         actions.addView(scan, wrapWithLeft(dp(10)));
         page.addView(actions);
 
-        LinearLayout tools = row();
-        EditText query = input("搜索名称");
-        query.setText(currentQuery);
-        Button search = ghostButton("搜索");
-        search.setOnClickListener(v -> {
-            currentQuery = query.getText().toString().trim();
-            showLibrary(currentFilter);
-        });
+        // 排序选择
+        LinearLayout sortRow = new LinearLayout(this);
+        sortRow.setOrientation(LinearLayout.HORIZONTAL);
+        sortRow.setGravity(Gravity.CENTER_VERTICAL);
+        sortRow.setPadding(0, dp(8), 0, dp(4));
+        TextView sortLabel = text("排序：", 13, false);
+        sortLabel.setTextColor(subtextColor());
         Spinner sort = new Spinner(this);
         sort.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"最近", "名称", "格式"}));
         sort.setSelection(sortIndex(currentSort));
@@ -272,11 +382,11 @@ public class MainActivity extends Activity {
                 showLibrary(currentFilter);
             }
         }));
-        tools.addView(query, new LinearLayout.LayoutParams(0, dp(46), 1));
-        tools.addView(search, wrapWithLeft(dp(10)));
-        tools.addView(sort, wrapWithLeft(dp(10)));
-        page.addView(tools);
+        sortRow.addView(sortLabel);
+        sortRow.addView(sort);
+        page.addView(sortRow);
 
+        // 媒体列表
         ArrayList<MediaItem> items = filteredItems(filter);
         if (items.isEmpty()) {
             page.addView(empty("没有找到媒体"));
@@ -292,30 +402,78 @@ public class MainActivity extends Activity {
         currentScreen = "settings";
         LinearLayout page = page();
         page.addView(header("设置", v -> showHome()));
+
+        // 常规设置组
         page.addView(section("常规"));
-        String themeLabel = isLightTheme() ? "浅色主题" : "深色主题";
-        page.addView(card("外观主题", themeLabel + "，点击切换", v -> {
-            prefs.edit().putString(KEY_THEME, isLightTheme() ? THEME_DARK : THEME_LIGHT).apply();
+        LinearLayout themeCard = new LinearLayout(this);
+        themeCard.setOrientation(LinearLayout.HORIZONTAL);
+        themeCard.setGravity(Gravity.CENTER_VERTICAL);
+        themeCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        themeCard.setBackground(rounded(surfaceColor(), dp(10), surfaceStroke()));
+        themeCard.setLayoutParams(matchWithTop(dp(10)));
+        LinearLayout themeText = new LinearLayout(this);
+        themeText.setOrientation(LinearLayout.VERTICAL);
+        themeText.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        themeText.addView(text("外观主题", 17, true));
+        TextView themeSub = text(isLightTheme() ? "浅色主题" : "深色主题", 13, false);
+        themeSub.setTextColor(subtextColor());
+        themeText.addView(themeSub);
+        themeCard.addView(themeText);
+        Switch themeSwitch = new Switch(this);
+        themeSwitch.setChecked(isLightTheme());
+        themeSwitch.setOnCheckedChangeListener((btn, checked) -> {
+            prefs.edit().putString(KEY_THEME, checked ? THEME_LIGHT : THEME_DARK).apply();
             configureWindow();
             showSettings();
-        }));
+        });
+        themeCard.addView(themeSwitch);
+        page.addView(themeCard);
+
         page.addView(card("播放设置", "应用内播放、倍速和全屏控制", null));
         page.addView(card("媒体库", library.size() + " 个本地媒体项目", v -> showLibrary("all")));
+
+        // 存储设置组
+        page.addView(section("存储"));
         page.addView(card("缓存", "清理媒体包临时文件", v -> {
             clearDirectory(new File(getCacheDir(), "media-packages"));
             Toast.makeText(this, "缓存已清理", Toast.LENGTH_SHORT).show();
         }));
+
+        // 高级设置组
+        page.addView(section("高级"));
         page.addView(card("高级设置", "媒体包管理、文件校验和数据库维护", v -> showAdvancedTools()));
+
+        // 关于
+        page.addView(section("关于"));
         page.addView(card("关于毛球播放器", "MaoqiuPlayer " + APP_VERSION, null));
 
-        Button clearRecent = ghostButton("清空最近播放");
-        clearRecent.setOnClickListener(v -> {
-            recent.clear();
-            saveItems(KEY_RECENT, recent);
-            Toast.makeText(this, "最近播放已清空", Toast.LENGTH_SHORT).show();
-            showSettings();
+        // 清空最近播放
+        LinearLayout clearCard = new LinearLayout(this);
+        clearCard.setOrientation(LinearLayout.HORIZONTAL);
+        clearCard.setGravity(Gravity.CENTER_VERTICAL);
+        clearCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        clearCard.setBackground(rounded(surfaceColor(), dp(10), surfaceStroke()));
+        clearCard.setLayoutParams(matchWithTop(dp(10)));
+        LinearLayout clearText = new LinearLayout(this);
+        clearText.setOrientation(LinearLayout.VERTICAL);
+        clearText.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        clearText.addView(text("清空最近播放", 17, true));
+        TextView clearSub = text("删除所有播放记录", 13, false);
+        clearSub.setTextColor(subtextColor());
+        clearText.addView(clearSub);
+        clearCard.addView(clearText);
+        Switch clearSwitch = new Switch(this);
+        clearSwitch.setChecked(false);
+        clearSwitch.setOnCheckedChangeListener((btn, checked) -> {
+            if (checked) {
+                recent.clear();
+                saveItems(KEY_RECENT, recent);
+                Toast.makeText(this, "最近播放已清空", Toast.LENGTH_SHORT).show();
+                btn.setChecked(false);
+            }
         });
-        page.addView(clearRecent, matchWithTop(dp(12)));
+        clearCard.addView(clearSwitch);
+        page.addView(clearCard);
 
         setScrollableContent(page);
     }
@@ -507,23 +665,23 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
         page.addView(imageView, imageLp);
 
-        LinearLayout controls = row();
+        LinearLayout controls1 = row();
         Button previous = ghostButton("上一张");
         previous.setOnClickListener(v -> openNeighbor(-1));
         Button next = ghostButton("下一张");
         next.setOnClickListener(v -> openNeighbor(1));
+        controls1.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
+        controls1.addView(next, new LinearLayout.LayoutParams(0, dp(46), 1));
+        page.addView(controls1);
+
+        LinearLayout controls2 = row();
         Button fit = ghostButton("适应");
         fit.setOnClickListener(v -> imageView.fitCenter());
         Button actual = ghostButton("实际大小");
         actual.setOnClickListener(v -> imageView.actualSize());
-        Button rotate = ghostButton("旋转");
-        rotate.setOnClickListener(v -> imageView.rotateRight());
-        controls.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
-        controls.addView(next, wrapWithLeft(dp(8)));
-        controls.addView(fit, wrapWithLeft(dp(8)));
-        controls.addView(actual, wrapWithLeft(dp(8)));
-        controls.addView(rotate, wrapWithLeft(dp(8)));
-        page.addView(controls);
+        controls2.addView(fit, new LinearLayout.LayoutParams(0, dp(46), 1));
+        controls2.addView(actual, new LinearLayout.LayoutParams(0, dp(46), 1));
+        page.addView(controls2);
 
         // Direct setContentView — no ScrollView wrapping the image
         page.setBackgroundColor(bgColor());
@@ -1323,16 +1481,38 @@ public class MainActivity extends Activity {
 
     private View mediaRow(MediaItem item, ArrayList<MediaItem> source, int index) {
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(13), dp(16), dp(13));
-        card.setBackground(rounded(cardColor(), dp(9), cardStroke()));
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(16), dp(10));
+        card.setBackground(rounded(cardColor(), dp(10), cardStroke()));
         card.setOnClickListener(v -> openItemFromList(source, index));
-        TextView name = text(item.name, 16, true);
+        card.setLayoutParams(matchWithTop(dp(8)));
+
+        // 左侧缩略图占位
+        TextView icon = new TextView(this);
+        icon.setText(KIND_VIDEO.equals(item.kind) ? "🎬" : KIND_IMAGE.equals(item.kind) ? "🖼️" : "📦");
+        icon.setTextSize(22);
+        icon.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(48), dp(48));
+        iconLp.rightMargin = dp(12);
+        icon.setBackground(rounded(thumbnailBgColor(), dp(8), 0));
+        card.addView(icon, iconLp);
+
+        // 右侧文字信息
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        TextView name = text(item.name, 15, true);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         TextView meta = text(labelForKind(item.kind) + " · " + item.source, 12, false);
         meta.setTextColor(subtextColor());
-        card.addView(name);
-        card.addView(meta);
-        return withTop(card, dp(8));
+        meta.setSingleLine(true);
+        info.addView(name);
+        info.addView(meta);
+        card.addView(info);
+
+        return card;
     }
 
     private TextView text(String value, int sp, boolean bold) {
@@ -1460,6 +1640,89 @@ public class MainActivity extends Activity {
         return out;
     }
 
+    private View gridCard(String emoji, String title, String subtitle, View.OnClickListener listener) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(16), dp(14), dp(14));
+        card.setBackground(rounded(surfaceColor(), dp(12), surfaceStroke()));
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setClickable(listener != null);
+        if (listener != null) {
+            card.setOnClickListener(listener);
+        }
+        TextView icon = new TextView(this);
+        icon.setText(emoji);
+        icon.setTextSize(24);
+        icon.setGravity(Gravity.CENTER);
+        card.addView(icon);
+        TextView titleView = text(title, 14, true);
+        titleView.setGravity(Gravity.CENTER);
+        titleView.setPadding(0, dp(6), 0, dp(2));
+        card.addView(titleView);
+        TextView subView = text(subtitle, 11, false);
+        subView.setTextColor(subtextColor());
+        subView.setGravity(Gravity.CENTER);
+        card.addView(subView);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        lp.rightMargin = dp(8);
+        card.setLayoutParams(lp);
+        return card;
+    }
+
+    private LinearLayout.LayoutParams gridCardRightParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        lp.leftMargin = dp(8);
+        return lp;
+    }
+
+    private View chipButton(String label, boolean active, View.OnClickListener listener) {
+        Button chip = new Button(this);
+        chip.setText(label);
+        chip.setAllCaps(false);
+        chip.setTextSize(13);
+        chip.setPadding(dp(18), dp(6), dp(18), dp(6));
+        if (active) {
+            chip.setTextColor(chipActiveTextColor());
+            chip.setBackground(rounded(chipActiveBgColor(), dp(18), chipActiveBgColor()));
+        } else {
+            chip.setTextColor(subtextColor());
+            chip.setBackground(rounded(chipBgColor(), dp(18), ghostStroke()));
+        }
+        chip.setOnClickListener(listener);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = dp(8);
+        chip.setLayoutParams(lp);
+        return chip;
+    }
+
+    private View recentCard(MediaItem item, ArrayList<MediaItem> source, int index) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setBackground(rounded(surfaceColor(), dp(10), surfaceStroke()));
+        card.setOnClickListener(v -> openItemFromList(source, index));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(dp(140), LinearLayout.LayoutParams.WRAP_CONTENT);
+        cardLp.rightMargin = dp(10);
+        card.setLayoutParams(cardLp);
+
+        // 缩略图占位
+        TextView icon = new TextView(this);
+        icon.setText(KIND_VIDEO.equals(item.kind) ? "🎬" : "🖼️");
+        icon.setTextSize(28);
+        icon.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(80));
+        iconLp.bottomMargin = dp(8);
+        icon.setBackground(rounded(thumbnailBgColor(), dp(8), 0));
+        card.addView(icon, iconLp);
+
+        TextView name = text(item.name, 13, true);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        card.addView(name);
+        return card;
+    }
+
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
@@ -1472,23 +1735,28 @@ public class MainActivity extends Activity {
         return isLightTheme() ? lightColor : darkColor;
     }
 
-    private int bgColor() { return color(0xff111214, 0xfffafafa); }
-    private int surfaceColor() { return color(0xff202226, 0xffffffff); }
+    private int bgColor() { return color(0xff17181a, 0xfffafafa); }
+    private int surfaceColor() { return color(0xff212224, 0xffffffff); }
     private int surfaceStroke() { return color(0xff2d3036, 0xffe0e0e0); }
-    private int cardColor() { return color(0xff1b1d21, 0xfff5f5f5); }
+    private int cardColor() { return color(0xff212224, 0xfff5f5f5); }
     private int cardStroke() { return color(0xff2a2d33, 0xffe0e0e0); }
-    private int textColor() { return color(0xfff4f1ea, 0xff1a1a1a); }
+    private int textColor() { return color(0xffffffff, 0xff1a1a1a); }
     private int subtextColor() { return color(0xffaeb4bd, 0xff666666); }
     private int hintColor() { return color(0xff767d88, 0xff999999); }
-    private int accentColor() { return 0xff82d8ff; }
-    private int accentTextColor() { return color(0xff06131c, 0xff06131c); }
-    private int ghostBgColor() { return color(0xff25282d, 0xffeeeeee); }
-    private int ghostStroke() { return color(0xff363a42, 0xffcccccc); }
-    private int inputBgColor() { return color(0xff202226, 0xffffffff); }
-    private int inputStroke() { return color(0xff2d3036, 0xffe0e0e0); }
-    private int headerIconColor() { return color(0xfff4f1ea, 0xff1a1a1a); }
-    private int progressBgColor() { return color(0xff363a42, 0xffcccccc); }
-    private int progressFillColor() { return 0xff82d8ff; }
+    private int accentColor() { return 0xfffb7299; }
+    private int accentTextColor() { return color(0xffffffff, 0xffffffff); }
+    private int ghostBgColor() { return color(0xff2c2d30, 0xffeeeeee); }
+    private int ghostStroke() { return color(0xff3a3b3e, 0xffcccccc); }
+    private int inputBgColor() { return color(0xff2c2d30, 0xffffffff); }
+    private int inputStroke() { return color(0xff3a3b3e, 0xffe0e0e0); }
+    private int headerIconColor() { return color(0xffffffff, 0xff1a1a1a); }
+    private int progressBgColor() { return color(0xff3a3b3e, 0xffcccccc); }
+    private int progressFillColor() { return 0xfffb7299; }
+    private int dividerColor() { return color(0xff2c2d30, 0xffe0e0e0); }
+    private int chipBgColor() { return color(0xff2c2d30, 0xfff0f0f0); }
+    private int chipActiveBgColor() { return 0xfffb7299; }
+    private int chipActiveTextColor() { return 0xffffffff; }
+    private int thumbnailBgColor() { return color(0xff2c2d30, 0xffe8e8e8); }
 
     private static class MediaItem {
         final String uri;
