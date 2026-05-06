@@ -866,8 +866,37 @@ public class MainActivity extends Activity {
             names[i] = mediaItems.get(i).name;
             checked[i] = true;
         }
+
+        LinearLayout optionsLayout = new LinearLayout(this);
+        optionsLayout.setOrientation(LinearLayout.VERTICAL);
+        optionsLayout.setPadding(dp(24), dp(12), dp(24), 0);
+
+        TextView pathLabel = new TextView(this);
+        pathLabel.setText("保存路径（留空默认 Downloads）");
+        pathLabel.setTextSize(14);
+        optionsLayout.addView(pathLabel);
+        EditText pathInput = new EditText(this);
+        pathInput.setHint("例如: Movies/MyPackages");
+        pathInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        pathInput.setTextSize(14);
+        optionsLayout.addView(pathInput);
+
+        TextView suffixLabel = new TextView(this);
+        suffixLabel.setText("文件后缀（留空默认 .mqp）");
+        suffixLabel.setTextSize(14);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        labelParams.topMargin = dp(12);
+        optionsLayout.addView(suffixLabel, labelParams);
+        EditText suffixInput = new EditText(this);
+        suffixInput.setHint(".mqp");
+        suffixInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        suffixInput.setTextSize(14);
+        optionsLayout.addView(suffixInput);
+
         new AlertDialog.Builder(this)
                 .setTitle("选择要打包的媒体")
+                .setView(optionsLayout)
                 .setMultiChoiceItems(names, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
                 .setPositiveButton("打包", (dialog, which) -> {
                     ArrayList<MediaItem> selected = new ArrayList<>();
@@ -878,20 +907,24 @@ public class MainActivity extends Activity {
                         Toast.makeText(this, "请至少选择一个媒体", Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    startPackaging(selected);
+                    String customPath = pathInput.getText().toString().trim();
+                    String customSuffix = suffixInput.getText().toString().trim();
+                    if (customSuffix.isEmpty()) customSuffix = ".mqp";
+                    if (!customSuffix.startsWith(".")) customSuffix = "." + customSuffix;
+                    startPackaging(selected, customPath, customSuffix);
                 })
                 .setNegativeButton("取消", null)
                 .show();
     }
 
-    private void startPackaging(ArrayList<MediaItem> items) {
+    private void startPackaging(ArrayList<MediaItem> items, String customPath, String customSuffix) {
         ProgressDialog progressDialog = new ProgressDialog(this);
         progressDialog.setMessage("正在打包 " + items.size() + " 个媒体...");
         progressDialog.setCancelable(false);
         progressDialog.show();
         new Thread(() -> {
             try {
-                String fileName = buildMediaPackage(items);
+                String fileName = buildMediaPackage(items, customPath, customSuffix);
                 runOnUiThread(() -> {
                     progressDialog.dismiss();
                     Toast.makeText(this, "打包完成: " + fileName, Toast.LENGTH_LONG).show();
@@ -905,7 +938,7 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private String buildMediaPackage(ArrayList<MediaItem> items) throws Exception {
+    private String buildMediaPackage(ArrayList<MediaItem> items, String customPath, String customSuffix) throws Exception {
         ByteArrayOutputStream zipBuffer = new ByteArrayOutputStream();
         JSONArray itemsJson = new JSONArray();
         Set<String> usedNames = new HashSet<>();
@@ -952,7 +985,7 @@ public class MainActivity extends Activity {
         header.put("created_at", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ROOT).format(new java.util.Date()));
         header.put("item_count", items.size());
         header.put("items", itemsJson);
-        header.put("suffix", ".mqp");
+        header.put("suffix", customSuffix);
         header.put("cipher", "AES-256-GCM");
         header.put("kdf", "PBKDF2-HMAC-SHA256");
         header.put("iterations", 390000);
@@ -961,12 +994,13 @@ public class MainActivity extends Activity {
         header.put("payload_sha256", sha256(encryptedPayload));
         byte[] headerBytes = header.toString().getBytes(StandardCharsets.UTF_8);
         byte[] magicBytes = MQP_MAGIC.getBytes(StandardCharsets.UTF_8);
-        String fileName = "media-pack-" + System.currentTimeMillis() + ".mqp";
+        String fileName = "media-pack-" + System.currentTimeMillis() + customSuffix;
+        String relativePath = customPath.isEmpty() ? Environment.DIRECTORY_DOWNLOADS : Environment.DIRECTORY_DOWNLOADS + "/" + customPath;
         if (Build.VERSION.SDK_INT >= 29) {
             ContentValues values = new ContentValues();
             values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
             values.put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream");
-            values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+            values.put(MediaStore.Downloads.RELATIVE_PATH, relativePath);
             Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
             if (uri == null) throw new IOException("无法创建文件");
             try (OutputStream os = getContentResolver().openOutputStream(uri)) {
@@ -977,7 +1011,9 @@ public class MainActivity extends Activity {
                 os.write(encryptedPayload);
             }
         } else {
-            File outputFile = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName);
+            File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), customPath);
+            if (!customPath.isEmpty() && !dir.exists()) dir.mkdirs();
+            File outputFile = new File(dir, fileName);
             try (FileOutputStream fos = new FileOutputStream(outputFile)) {
                 fos.write(magicBytes);
                 fos.write(ByteBuffer.allocate(4).putInt(headerBytes.length).array());
