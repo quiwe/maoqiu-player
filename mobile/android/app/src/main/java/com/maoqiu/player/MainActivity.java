@@ -89,6 +89,8 @@ public class MainActivity extends Activity {
     private static final int REQ_OPEN_MEDIA = 1001;
     private static final int REQ_IMPORT_MEDIA = 1002;
     private static final int REQ_SCAN_MEDIA = 1003;
+    private static final int REQ_PACKAGE_MEDIA = 1004;
+    private static final int REQ_PICK_FOLDER = 1005;
 
     private static final String PREFS_NAME = "maoqiu_player_android";
     private static final String KEY_LIBRARY = "library";
@@ -117,6 +119,9 @@ public class MainActivity extends Activity {
     private String currentSort = "time";
     private MediaPlayer currentMediaPlayer;
     private float playbackSpeed = 1.0f;
+    private ArrayList<MediaItem> pendingPackageItems;
+    private AlertDialog activePackageDialog;
+    private EditText activePathInput;
     private boolean fullscreen = false;
     private SharedPreferences prefs;
 
@@ -910,6 +915,18 @@ public class MainActivity extends Activity {
         } else if (requestCode == REQ_IMPORT_MEDIA) {
             Toast.makeText(this, "已导入 " + picked.size() + " 个媒体", Toast.LENGTH_SHORT).show();
             showLibrary(currentFilter);
+        } else if (requestCode == REQ_PACKAGE_MEDIA) {
+            if (!picked.isEmpty()) {
+                showPackageOptionsDialog(picked);
+            } else {
+                Toast.makeText(this, "未选择任何文件", Toast.LENGTH_SHORT).show();
+            }
+        } else if (requestCode == REQ_PICK_FOLDER) {
+            Uri treeUri = data.getData();
+            if (treeUri != null && activePathInput != null) {
+                String folderPath = extractRelativePathFromTreeUri(treeUri);
+                activePathInput.setText(folderPath);
+            }
         }
     }
 
@@ -1164,31 +1181,33 @@ public class MainActivity extends Activity {
     }
 
     private void showPackageMediaDialog() {
-        ArrayList<MediaItem> mediaItems = new ArrayList<>();
-        for (MediaItem item : library) {
-            if (KIND_VIDEO.equals(item.kind) || KIND_IMAGE.equals(item.kind)) {
-                mediaItems.add(item);
-            }
-        }
-        if (mediaItems.isEmpty()) {
-            Toast.makeText(this, "没有可打包的媒体，请先导入视频或图片", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        String[] names = new String[mediaItems.size()];
-        boolean[] checked = new boolean[mediaItems.size()];
-        for (int i = 0; i < mediaItems.size(); i++) {
-            names[i] = mediaItems.get(i).name;
-            checked[i] = true;
-        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(intent, REQ_PACKAGE_MEDIA);
+    }
+
+    private void showPackageOptionsDialog(ArrayList<MediaItem> items) {
+        pendingPackageItems = items;
 
         LinearLayout optionsLayout = new LinearLayout(this);
         optionsLayout.setOrientation(LinearLayout.VERTICAL);
         optionsLayout.setPadding(dp(24), dp(12), dp(24), 0);
 
+        TextView infoLabel = new TextView(this);
+        infoLabel.setText("已选择 " + items.size() + " 个文件");
+        infoLabel.setTextSize(14);
+        infoLabel.setTextColor(subtextColor());
+        optionsLayout.addView(infoLabel);
+
         TextView nameLabel = new TextView(this);
         nameLabel.setText("文件名称（留空自动生成）");
         nameLabel.setTextSize(14);
-        optionsLayout.addView(nameLabel);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        labelParams.topMargin = dp(12);
+        optionsLayout.addView(nameLabel, labelParams);
         EditText nameInput = new EditText(this);
         nameInput.setHint("例如: 我的旅行合集");
         nameInput.setInputType(InputType.TYPE_CLASS_TEXT);
@@ -1198,15 +1217,27 @@ public class MainActivity extends Activity {
         TextView pathLabel = new TextView(this);
         pathLabel.setText("保存路径（留空默认 Downloads）");
         pathLabel.setTextSize(14);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        labelParams.topMargin = dp(12);
         optionsLayout.addView(pathLabel, labelParams);
-        EditText pathInput = new EditText(this);
-        pathInput.setHint("例如: Movies/MyPackages");
-        pathInput.setInputType(InputType.TYPE_CLASS_TEXT);
-        pathInput.setTextSize(14);
-        optionsLayout.addView(pathInput);
+        LinearLayout pathRow = new LinearLayout(this);
+        pathRow.setOrientation(LinearLayout.HORIZONTAL);
+        pathRow.setGravity(Gravity.CENTER_VERTICAL);
+        activePathInput = new EditText(this);
+        activePathInput.setHint("例如: Movies/MyPackages");
+        activePathInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        activePathInput.setTextSize(14);
+        activePathInput.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        Button pickFolderBtn = new Button(this);
+        pickFolderBtn.setText("选择");
+        pickFolderBtn.setAllCaps(false);
+        pickFolderBtn.setTextSize(13);
+        pickFolderBtn.setPadding(dp(12), 0, dp(12), 0);
+        pickFolderBtn.setOnClickListener(v -> {
+            Intent treeIntent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            startActivityForResult(treeIntent, REQ_PICK_FOLDER);
+        });
+        pathRow.addView(activePathInput);
+        pathRow.addView(pickFolderBtn, wrapWithLeft(dp(8)));
+        optionsLayout.addView(pathRow);
 
         TextView suffixLabel = new TextView(this);
         suffixLabel.setText("文件后缀（留空默认 .mqp）");
@@ -1218,28 +1249,35 @@ public class MainActivity extends Activity {
         suffixInput.setTextSize(14);
         optionsLayout.addView(suffixInput);
 
-        new AlertDialog.Builder(this)
-                .setTitle("选择要打包的媒体")
+        activePackageDialog = new AlertDialog.Builder(this)
+                .setTitle("打包媒体")
                 .setView(optionsLayout)
-                .setMultiChoiceItems(names, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
                 .setPositiveButton("打包", (dialog, which) -> {
-                    ArrayList<MediaItem> selected = new ArrayList<>();
-                    for (int i = 0; i < checked.length; i++) {
-                        if (checked[i]) selected.add(mediaItems.get(i));
-                    }
-                    if (selected.isEmpty()) {
-                        Toast.makeText(this, "请至少选择一个媒体", Toast.LENGTH_SHORT).show();
+                    if (pendingPackageItems == null || pendingPackageItems.isEmpty()) {
+                        Toast.makeText(this, "没有可打包的文件", Toast.LENGTH_SHORT).show();
                         return;
                     }
                     String customName = nameInput.getText().toString().trim();
-                    String customPath = pathInput.getText().toString().trim();
+                    String customPath = activePathInput.getText().toString().trim();
                     String customSuffix = suffixInput.getText().toString().trim();
                     if (customSuffix.isEmpty()) customSuffix = ".mqp";
                     if (!customSuffix.startsWith(".")) customSuffix = "." + customSuffix;
-                    startPackaging(selected, customName, customPath, customSuffix);
+                    startPackaging(pendingPackageItems, customName, customPath, customSuffix);
+                    pendingPackageItems = null;
                 })
-                .setNegativeButton("取消", null)
-                .show();
+                .setNegativeButton("取消", (dialog, which) -> {
+                    pendingPackageItems = null;
+                })
+                .create();
+        activePackageDialog.show();
+    }
+
+    private String extractRelativePathFromTreeUri(Uri treeUri) {
+        String docId = android.provider.DocumentsContract.getTreeDocumentId(treeUri);
+        if (docId != null && docId.startsWith("primary:")) {
+            return docId.substring("primary:".length());
+        }
+        return docId != null ? docId : "";
     }
 
     private void startPackaging(ArrayList<MediaItem> items, String customName, String customPath, String customSuffix) {
