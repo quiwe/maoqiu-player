@@ -871,10 +871,23 @@ public class MainActivity extends Activity {
         optionsLayout.setOrientation(LinearLayout.VERTICAL);
         optionsLayout.setPadding(dp(24), dp(12), dp(24), 0);
 
+        TextView nameLabel = new TextView(this);
+        nameLabel.setText("文件名称（留空自动生成）");
+        nameLabel.setTextSize(14);
+        optionsLayout.addView(nameLabel);
+        EditText nameInput = new EditText(this);
+        nameInput.setHint("例如: 我的旅行合集");
+        nameInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        nameInput.setTextSize(14);
+        optionsLayout.addView(nameInput);
+
         TextView pathLabel = new TextView(this);
         pathLabel.setText("保存路径（留空默认 Downloads）");
         pathLabel.setTextSize(14);
-        optionsLayout.addView(pathLabel);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        labelParams.topMargin = dp(12);
+        optionsLayout.addView(pathLabel, labelParams);
         EditText pathInput = new EditText(this);
         pathInput.setHint("例如: Movies/MyPackages");
         pathInput.setInputType(InputType.TYPE_CLASS_TEXT);
@@ -884,9 +897,6 @@ public class MainActivity extends Activity {
         TextView suffixLabel = new TextView(this);
         suffixLabel.setText("文件后缀（留空默认 .mqp）");
         suffixLabel.setTextSize(14);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        labelParams.topMargin = dp(12);
         optionsLayout.addView(suffixLabel, labelParams);
         EditText suffixInput = new EditText(this);
         suffixInput.setHint(".mqp");
@@ -907,24 +917,25 @@ public class MainActivity extends Activity {
                         Toast.makeText(this, "请至少选择一个媒体", Toast.LENGTH_SHORT).show();
                         return;
                     }
+                    String customName = nameInput.getText().toString().trim();
                     String customPath = pathInput.getText().toString().trim();
                     String customSuffix = suffixInput.getText().toString().trim();
                     if (customSuffix.isEmpty()) customSuffix = ".mqp";
                     if (!customSuffix.startsWith(".")) customSuffix = "." + customSuffix;
-                    startPackaging(selected, customPath, customSuffix);
+                    startPackaging(selected, customName, customPath, customSuffix);
                 })
                 .setNegativeButton("取消", null)
                 .show();
     }
 
-    private void startPackaging(ArrayList<MediaItem> items, String customPath, String customSuffix) {
+    private void startPackaging(ArrayList<MediaItem> items, String customName, String customPath, String customSuffix) {
         ProgressDialog progressDialog = new ProgressDialog(this);
         progressDialog.setMessage("正在打包 " + items.size() + " 个媒体...");
         progressDialog.setCancelable(false);
         progressDialog.show();
         new Thread(() -> {
             try {
-                String fileName = buildMediaPackage(items, customPath, customSuffix);
+                String fileName = buildMediaPackage(items, customName, customPath, customSuffix);
                 runOnUiThread(() -> {
                     progressDialog.dismiss();
                     Toast.makeText(this, "打包完成: " + fileName, Toast.LENGTH_LONG).show();
@@ -938,7 +949,7 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private String buildMediaPackage(ArrayList<MediaItem> items, String customPath, String customSuffix) throws Exception {
+    private String buildMediaPackage(ArrayList<MediaItem> items, String customName, String customPath, String customSuffix) throws Exception {
         ByteArrayOutputStream zipBuffer = new ByteArrayOutputStream();
         JSONArray itemsJson = new JSONArray();
         Set<String> usedNames = new HashSet<>();
@@ -981,7 +992,8 @@ public class MainActivity extends Activity {
         header.put("format", MQP_FORMAT);
         header.put("version", "1");
         header.put("app", "MaoqiuPlayer");
-        header.put("package_name", "media-pack-" + System.currentTimeMillis());
+        String baseName = customName.isEmpty() ? ("media-pack-" + System.currentTimeMillis()) : customName;
+        header.put("package_name", baseName);
         header.put("created_at", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ROOT).format(new java.util.Date()));
         header.put("item_count", items.size());
         header.put("items", itemsJson);
@@ -994,7 +1006,7 @@ public class MainActivity extends Activity {
         header.put("payload_sha256", sha256(encryptedPayload));
         byte[] headerBytes = header.toString().getBytes(StandardCharsets.UTF_8);
         byte[] magicBytes = MQP_MAGIC.getBytes(StandardCharsets.UTF_8);
-        String fileName = "media-pack-" + System.currentTimeMillis() + customSuffix;
+        String fileName = baseName + customSuffix;
         String relativePath = customPath.isEmpty() ? Environment.DIRECTORY_DOWNLOADS : Environment.DIRECTORY_DOWNLOADS + "/" + customPath;
         if (Build.VERSION.SDK_INT >= 29) {
             ContentValues values = new ContentValues();
