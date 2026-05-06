@@ -331,7 +331,10 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "该视频暂时无法在应用内播放", Toast.LENGTH_LONG).show();
             return false;
         });
-        page.addView(video, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(320)));
+        // Video takes remaining space with weight=1
+        LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        page.addView(video, videoLp);
 
         LinearLayout controls = row();
         Button previous = ghostButton("上一项");
@@ -365,7 +368,9 @@ public class MainActivity extends Activity {
         external.setOnClickListener(v -> openExternal(item));
         page.addView(external, matchWithTop(dp(10)));
 
-        setScrollableContent(page);
+        // Direct setContentView — no ScrollView wrapping the video
+        page.setBackgroundColor(0xff111214);
+        setContentView(page);
     }
 
     private void showImageViewer(MediaItem item) {
@@ -379,7 +384,10 @@ public class MainActivity extends Activity {
         } catch (IOException exc) {
             Toast.makeText(this, "无法显示该图片", Toast.LENGTH_LONG).show();
         }
-        page.addView(imageView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(430)));
+        // Image takes remaining space with weight=1
+        LinearLayout.LayoutParams imageLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        page.addView(imageView, imageLp);
 
         LinearLayout controls = row();
         Button previous = ghostButton("上一张");
@@ -399,7 +407,9 @@ public class MainActivity extends Activity {
         controls.addView(rotate, wrapWithLeft(dp(8)));
         page.addView(controls);
 
-        setScrollableContent(page);
+        // Direct setContentView — no ScrollView wrapping the image
+        page.setBackgroundColor(0xff111214);
+        setContentView(page);
     }
 
     private void showPackageDetails(MediaItem item) {
