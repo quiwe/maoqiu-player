@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
+
+# Prefer predictable playback behavior in packaged builds. Qt documents that
+# hardware texture conversion can cause rendering issues on some drivers.
+os.environ.setdefault("QT_MEDIA_BACKEND", "ffmpeg")
+os.environ.setdefault("QT_DISABLE_HW_TEXTURES_CONVERSION", "1")
 
 from PySide6.QtWidgets import QApplication
 
