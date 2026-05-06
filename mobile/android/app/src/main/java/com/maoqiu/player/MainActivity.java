@@ -405,7 +405,6 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
         page.addView(video, videoLp);
 
-        LinearLayout controls = row();
         Button previous = ghostButton("上一项");
         previous.setOnClickListener(v -> openNeighbor(-1));
         Button play = button("播放/暂停");
@@ -426,16 +425,19 @@ public class MainActivity extends Activity {
         });
         Button full = ghostButton("全屏");
         full.setOnClickListener(v -> setFullscreen(!fullscreen));
-        controls.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
-        controls.addView(play, wrapWithLeft(dp(8)));
-        controls.addView(next, wrapWithLeft(dp(8)));
-        controls.addView(speed, wrapWithLeft(dp(8)));
-        controls.addView(full, wrapWithLeft(dp(8)));
-        page.addView(controls);
+        LinearLayout controls1 = row();
+        controls1.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
+        controls1.addView(play, wrapWithLeft(dp(8)));
+        controls1.addView(next, wrapWithLeft(dp(8)));
+        page.addView(controls1);
 
+        LinearLayout controls2 = row();
+        controls2.addView(speed, new LinearLayout.LayoutParams(0, dp(46), 1));
+        controls2.addView(full, wrapWithLeft(dp(8)));
         Button external = ghostButton("系统播放器");
         external.setOnClickListener(v -> openExternal(item));
-        page.addView(external, matchWithTop(dp(10)));
+        controls2.addView(external, wrapWithLeft(dp(8)));
+        page.addView(controls2);
 
         // Direct setContentView — no ScrollView wrapping the video
         page.setBackgroundColor(0xff111214);
