@@ -1,6 +1,6 @@
 #define MyAppName "MaoqiuPlayer"
 #define MyAppPublisher "Maoqiu"
-#define MyAppVersion "0.1.3"
+#define MyAppVersion "0.1.4"
 #define MyAppExeName "MaoqiuPlayer.exe"
 
 [Setup]
@@ -21,7 +21,6 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

@@ -28,7 +28,7 @@ jobs:
             package_name: MaoqiuPlayer-Windows-Setup.exe
           - os: ubuntu-latest
             artifact_name: MaoqiuPlayer-Linux
-            package_name: maoqiu-player_0.1.3_amd64.deb
+            package_name: maoqiu-player_0.1.4_amd64.deb
 
     steps:
       - name: Checkout
@@ -117,7 +117,7 @@ jobs:
           DESKTOP
           cat > "$PKG_ROOT/DEBIAN/control" <<'CONTROL'
           Package: maoqiu-player
-          Version: 0.1.3
+          Version: 0.1.4
           Section: video
           Priority: optional
           Architecture: amd64
@@ -264,7 +264,7 @@ jobs:
             echo
             echo "- macOS: MaoqiuPlayer-macOS.dmg"
             echo "- Windows: MaoqiuPlayer-Windows-Setup.exe"
-            echo "- Linux: maoqiu-player_0.1.3_amd64.deb"
+            echo "- Linux: maoqiu-player_0.1.4_amd64.deb"
             echo "- Android: MaoqiuPlayer-Android.apk"
             echo "- iOS: MaoqiuPlayer-iOS.ipa (unsigned)"
             echo
