@@ -28,7 +28,7 @@ jobs:
             package_name: MaoqiuPlayer-Windows-Setup.exe
           - os: ubuntu-latest
             artifact_name: MaoqiuPlayer-Linux
-            package_name: maoqiu-player_0.1.4_amd64.deb
+            package_name: maoqiu-player_0.1.5_amd64.deb
 
     steps:
       - name: Checkout
@@ -80,9 +80,16 @@ jobs:
         if: runner.os == 'Linux'
         run: pyinstaller --noconfirm --clean --onedir --name MaoqiuPlayer --add-data "assets:assets" main.py
 
-      - name: Create macOS DMG
+      - name: Create macOS PKG installer DMG
         if: runner.os == 'macOS'
-        run: hdiutil create -volname MaoqiuPlayer -srcfolder dist/MaoqiuPlayer.app -ov -format UDZO "${{ matrix.package_name }}"
+        run: |
+          mkdir -p dist-pkg dmg-root
+          pkgbuild \
+            --component dist/MaoqiuPlayer.app \
+            --install-location /Applications \
+            dist-pkg/MaoqiuPlayer-macOS.pkg
+          cp dist-pkg/MaoqiuPlayer-macOS.pkg dmg-root/
+          hdiutil create -volname MaoqiuPlayer -srcfolder dmg-root -ov -format UDZO "${{ matrix.package_name }}"
 
       - name: Install Inno Setup
         if: runner.os == 'Windows'
@@ -117,7 +124,7 @@ jobs:
           DESKTOP
           cat > "$PKG_ROOT/DEBIAN/control" <<'CONTROL'
           Package: maoqiu-player
-          Version: 0.1.4
+          Version: 0.1.5
           Section: video
           Priority: optional
           Architecture: amd64
@@ -262,9 +269,9 @@ jobs:
             echo
             echo "## 安装包"
             echo
-            echo "- macOS: MaoqiuPlayer-macOS.dmg"
+            echo "- macOS: MaoqiuPlayer-macOS.dmg (contains MaoqiuPlayer-macOS.pkg installer)"
             echo "- Windows: MaoqiuPlayer-Windows-Setup.exe"
-            echo "- Linux: maoqiu-player_0.1.4_amd64.deb"
+            echo "- Linux: maoqiu-player_0.1.5_amd64.deb"
             echo "- Android: MaoqiuPlayer-Android.apk"
             echo "- iOS: MaoqiuPlayer-iOS.ipa (unsigned)"
             echo

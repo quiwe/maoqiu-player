@@ -5,7 +5,7 @@ from pathlib import Path
 APP_ENGLISH_NAME = "MaoqiuPlayer"
 APP_CHINESE_NAME = "毛球播放器"
 APP_DISPLAY_NAME = f"{APP_CHINESE_NAME} / {APP_ENGLISH_NAME}"
-APP_VERSION = "0.1.4"
+APP_VERSION = "0.1.5"
 APP_AUTHOR = "Maoqiu"
 REPOSITORY_NAME = "maoqiu-player"
 
