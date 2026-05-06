@@ -43,6 +43,7 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.MediaController;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -98,6 +99,10 @@ public class MainActivity extends Activity {
     private static final String MQP_MAGIC = "MAOQIU_PLAYER_ENC_V1";
     private static final String MQP_FORMAT = "MaoqiuPlayerMediaPackage";
     private static final String MQP_DEFAULT_PHRASE = "MaoqiuPlayer local media package v1";
+    private static final String APP_VERSION = "0.1.10";
+    private static final String KEY_THEME = "theme";
+    private static final String THEME_DARK = "dark";
+    private static final String THEME_LIGHT = "light";
 
     private final ArrayList<MediaItem> library = new ArrayList<>();
     private final ArrayList<MediaItem> recent = new ArrayList<>();
@@ -155,8 +160,13 @@ public class MainActivity extends Activity {
 
     private void configureWindow() {
         Window window = getWindow();
-        window.setStatusBarColor(0xff0f1114);
-        window.setNavigationBarColor(0xff0f1114);
+        window.setStatusBarColor(bgColor());
+        window.setNavigationBarColor(bgColor());
+        if (isLightTheme() && Build.VERSION.SDK_INT >= 23) {
+            window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        } else {
+            window.getDecorView().setSystemUiVisibility(0);
+        }
     }
 
     private void showHome() {
@@ -283,6 +293,12 @@ public class MainActivity extends Activity {
         LinearLayout page = page();
         page.addView(header("设置", v -> showHome()));
         page.addView(section("常规"));
+        String themeLabel = isLightTheme() ? "浅色主题" : "深色主题";
+        page.addView(card("外观主题", themeLabel + "，点击切换", v -> {
+            prefs.edit().putString(KEY_THEME, isLightTheme() ? THEME_DARK : THEME_LIGHT).apply();
+            configureWindow();
+            showSettings();
+        }));
         page.addView(card("播放设置", "应用内播放、倍速和全屏控制", null));
         page.addView(card("媒体库", library.size() + " 个本地媒体项目", v -> showLibrary("all")));
         page.addView(card("缓存", "清理媒体包临时文件", v -> {
@@ -290,7 +306,7 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "缓存已清理", Toast.LENGTH_SHORT).show();
         }));
         page.addView(card("高级设置", "媒体包管理、文件校验和数据库维护", v -> showAdvancedTools()));
-        page.addView(card("关于毛球播放器", "MaoqiuPlayer 0.1.5", null));
+        page.addView(card("关于毛球播放器", "MaoqiuPlayer " + APP_VERSION, null));
 
         Button clearRecent = ghostButton("清空最近播放");
         clearRecent.setOnClickListener(v -> {
@@ -358,70 +374,96 @@ public class MainActivity extends Activity {
 
     private void showVideoPlayer(MediaItem item) {
         currentScreen = "video";
+        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR);
         LinearLayout page = page();
-        page.addView(header(item.name, v -> showLibrary(currentFilter)));
+        page.addView(header(item.name, v -> {
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+            showLibrary(currentFilter);
+        }));
 
         VideoView video = new VideoView(this);
-        MediaController controller = new MediaController(this);
-        controller.setAnchorView(video);
-        video.setMediaController(controller);
 
         // Resolve the best playable URI
         Uri videoUri = resolvePlayableUri(Uri.parse(item.uri));
         video.setVideoURI(videoUri);
 
+        // Progress bar + time display
+        LinearLayout progressRow = new LinearLayout(this);
+        progressRow.setOrientation(LinearLayout.HORIZONTAL);
+        progressRow.setGravity(Gravity.CENTER_VERTICAL);
+        progressRow.setPadding(dp(8), dp(4), dp(8), dp(4));
+
+        TextView timeCurrent = text("00:00", 12, false);
+        timeCurrent.setTextColor(subtextColor());
+        timeCurrent.setMinWidth(dp(48));
+
+        SeekBar seekBar = new SeekBar(this);
+        LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams(0, dp(28), 1);
+        seekLp.leftMargin = dp(8);
+        seekLp.rightMargin = dp(8);
+
+        TextView timeTotal = text("00:00", 12, false);
+        timeTotal.setTextColor(subtextColor());
+        timeTotal.setMinWidth(dp(48));
+        timeTotal.setGravity(Gravity.END);
+
+        progressRow.addView(timeCurrent);
+        progressRow.addView(seekBar, seekLp);
+        progressRow.addView(timeTotal);
+
+        // SeekBar drag handler
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            boolean wasPlaying = false;
+            @Override public void onStartTrackingTouch(SeekBar sb) { wasPlaying = video.isPlaying(); video.pause(); }
+            @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                if (fromUser) { video.seekTo(progress); timeCurrent.setText(formatDuration(progress)); }
+            }
+            @Override public void onStopTrackingTouch(SeekBar sb) { if (wasPlaying) video.start(); }
+        });
+
+        // Update progress periodically
+        android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        Runnable progressUpdater = new Runnable() {
+            @Override public void run() {
+                if (video.isPlaying()) { int pos = video.getCurrentPosition(); seekBar.setProgress(pos); timeCurrent.setText(formatDuration(pos)); }
+                progressHandler.postDelayed(this, 500);
+            }
+        };
+
         video.setOnPreparedListener(mp -> {
             currentMediaPlayer = mp;
             applyPlaybackSpeed();
+            int dur = mp.getDuration();
+            seekBar.setMax(dur);
+            timeTotal.setText(formatDuration(dur));
             video.start();
+            progressHandler.post(progressUpdater);
         });
         video.setOnErrorListener((mp, what, extra) -> {
-            // If file:// URI failed, try content URI directly
+            progressHandler.removeCallbacks(progressUpdater);
             if ("file".equals(videoUri.getScheme())) {
-                try {
-                    Uri contentUri = Uri.parse(item.uri);
-                    if ("content".equals(contentUri.getScheme())) {
-                        video.setVideoURI(contentUri);
-                        return true;
-                    }
-                } catch (Exception ignored) {}
+                try { Uri contentUri = Uri.parse(item.uri); if ("content".equals(contentUri.getScheme())) { video.setVideoURI(contentUri); return true; } } catch (Exception ignored) {}
             }
-            // If content URI failed, try resolving to file path
             if ("content".equals(videoUri.getScheme())) {
-                try {
-                    String path = getPathFromUri(videoUri);
-                    if (path != null && new java.io.File(path).exists()) {
-                        video.setVideoPath(path);
-                        return true;
-                    }
-                } catch (Exception ignored) {}
+                try { String path = getPathFromUri(videoUri); if (path != null && new java.io.File(path).exists()) { video.setVideoPath(path); return true; } } catch (Exception ignored) {}
             }
             Toast.makeText(this, "该视频暂时无法播放 (" + what + ", " + extra + ")", Toast.LENGTH_LONG).show();
             return true;
         });
-        // Video takes remaining space with weight=1
-        LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
+        video.setOnCompletionListener(mp -> { progressHandler.removeCallbacks(progressUpdater); seekBar.setProgress(seekBar.getMax()); timeCurrent.setText(formatDuration(seekBar.getMax())); });
+
+        LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
         page.addView(video, videoLp);
+        page.addView(progressRow);
 
         Button previous = ghostButton("上一项");
         previous.setOnClickListener(v -> openNeighbor(-1));
         Button play = button("播放/暂停");
-        play.setOnClickListener(v -> {
-            if (video.isPlaying()) {
-                video.pause();
-            } else {
-                video.start();
-            }
-        });
+        play.setOnClickListener(v -> { if (video.isPlaying()) { video.pause(); } else { video.start(); progressHandler.post(progressUpdater); } });
         Button next = ghostButton("下一项");
         next.setOnClickListener(v -> openNeighbor(1));
         Button speed = ghostButton(String.format(Locale.ROOT, "%.2fx", playbackSpeed));
-        speed.setOnClickListener(v -> {
-            playbackSpeed = nextSpeed(playbackSpeed);
-            speed.setText(String.format(Locale.ROOT, "%.2fx", playbackSpeed));
-            applyPlaybackSpeed();
-        });
+        speed.setOnClickListener(v -> { playbackSpeed = nextSpeed(playbackSpeed); speed.setText(String.format(Locale.ROOT, "%.2fx", playbackSpeed)); applyPlaybackSpeed(); });
         Button full = ghostButton("全屏");
         full.setOnClickListener(v -> setFullscreen(!fullscreen));
         LinearLayout controls1 = row();
@@ -438,9 +480,15 @@ public class MainActivity extends Activity {
         controls2.addView(external, wrapWithLeft(dp(8)));
         page.addView(controls2);
 
-        // Direct setContentView — no ScrollView wrapping the video
-        page.setBackgroundColor(0xff111214);
+        page.setBackgroundColor(bgColor());
         setContentView(page);
+    }
+
+    private String formatDuration(int ms) {
+        int totalSec = ms / 1000;
+        int min = totalSec / 60;
+        int sec = totalSec % 60;
+        return String.format(Locale.ROOT, "%02d:%02d", min, sec);
     }
 
     private void showImageViewer(MediaItem item) {
@@ -478,7 +526,7 @@ public class MainActivity extends Activity {
         page.addView(controls);
 
         // Direct setContentView — no ScrollView wrapping the image
-        page.setBackgroundColor(0xff111214);
+        page.setBackgroundColor(bgColor());
         setContentView(page);
     }
 
@@ -1196,7 +1244,7 @@ public class MainActivity extends Activity {
     private void setScrollableContent(LinearLayout page) {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(0xff111214);
+        scroll.setBackgroundColor(bgColor());
         scroll.addView(page);
         setContentView(scroll);
     }
@@ -1205,7 +1253,7 @@ public class MainActivity extends Activity {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(dp(18), dp(18), dp(18), dp(28));
-        layout.setBackgroundColor(0xff111214);
+        layout.setBackgroundColor(bgColor());
         return layout;
     }
 
@@ -1223,7 +1271,7 @@ public class MainActivity extends Activity {
         box.setPadding(0, dp(8), 0, dp(18));
         TextView title = text(primary, 30, true);
         TextView subtitle = text(secondary, 16, false);
-        subtitle.setTextColor(0xffaeb4bd);
+        subtitle.setTextColor(subtextColor());
         box.addView(title);
         box.addView(subtitle);
         return box;
@@ -1234,7 +1282,7 @@ public class MainActivity extends Activity {
         ImageButton back = new ImageButton(this);
         back.setImageResource(android.R.drawable.ic_media_previous);
         back.setBackgroundColor(Color.TRANSPARENT);
-        back.setColorFilter(0xfff4f1ea);
+        back.setColorFilter(headerIconColor());
         back.setOnClickListener(backListener);
         TextView title = text(label, 22, true);
         row.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -1260,14 +1308,14 @@ public class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setBackground(rounded(0xff202226, dp(10), 0xff2d3036));
+        card.setBackground(rounded(surfaceColor(), dp(10), surfaceStroke()));
         card.setClickable(listener != null);
         if (listener != null) {
             card.setOnClickListener(listener);
         }
         TextView titleView = text(title, 17, true);
         TextView subtitleView = text(subtitle, 13, false);
-        subtitleView.setTextColor(0xffaeb4bd);
+        subtitleView.setTextColor(subtextColor());
         card.addView(titleView);
         card.addView(subtitleView);
         return withTop(card, dp(10));
@@ -1277,11 +1325,11 @@ public class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(13), dp(16), dp(13));
-        card.setBackground(rounded(0xff1b1d21, dp(9), 0xff2a2d33));
+        card.setBackground(rounded(cardColor(), dp(9), cardStroke()));
         card.setOnClickListener(v -> openItemFromList(source, index));
         TextView name = text(item.name, 16, true);
         TextView meta = text(labelForKind(item.kind) + " · " + item.source, 12, false);
-        meta.setTextColor(0xffaeb4bd);
+        meta.setTextColor(subtextColor());
         card.addView(name);
         card.addView(meta);
         return withTop(card, dp(8));
@@ -1291,7 +1339,7 @@ public class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(sp);
-        view.setTextColor(0xfff4f1ea);
+        view.setTextColor(textColor());
         view.setLineSpacing(0, 1.12f);
         if (bold) {
             view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -1304,10 +1352,10 @@ public class MainActivity extends Activity {
         input.setHint(hint);
         input.setSingleLine(true);
         input.setInputType(InputType.TYPE_CLASS_TEXT);
-        input.setTextColor(0xfff4f1ea);
-        input.setHintTextColor(0xff767d88);
+        input.setTextColor(textColor());
+        input.setHintTextColor(hintColor());
         input.setPadding(dp(14), 0, dp(14), 0);
-        input.setBackground(rounded(0xff202226, dp(9), 0xff2d3036));
+        input.setBackground(rounded(inputBgColor(), dp(9), inputStroke()));
         return input;
     }
 
@@ -1315,8 +1363,8 @@ public class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextColor(0xff06131c);
-        button.setBackground(rounded(0xff82d8ff, dp(9), 0xff82d8ff));
+        button.setTextColor(accentTextColor());
+        button.setBackground(rounded(accentColor(), dp(9), accentColor()));
         return button;
     }
 
@@ -1324,8 +1372,8 @@ public class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextColor(0xfff4f1ea);
-        button.setBackground(rounded(0xff25282d, dp(9), 0xff363a42));
+        button.setTextColor(textColor());
+        button.setBackground(rounded(ghostBgColor(), dp(9), ghostStroke()));
         return button;
     }
 
@@ -1416,6 +1464,32 @@ public class MainActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    private boolean isLightTheme() {
+        return THEME_LIGHT.equals(prefs.getString(KEY_THEME, THEME_DARK));
+    }
+
+    private int color(int darkColor, int lightColor) {
+        return isLightTheme() ? lightColor : darkColor;
+    }
+
+    private int bgColor() { return color(0xff111214, 0xfffafafa); }
+    private int surfaceColor() { return color(0xff202226, 0xffffffff); }
+    private int surfaceStroke() { return color(0xff2d3036, 0xffe0e0e0); }
+    private int cardColor() { return color(0xff1b1d21, 0xfff5f5f5); }
+    private int cardStroke() { return color(0xff2a2d33, 0xffe0e0e0); }
+    private int textColor() { return color(0xfff4f1ea, 0xff1a1a1a); }
+    private int subtextColor() { return color(0xffaeb4bd, 0xff666666); }
+    private int hintColor() { return color(0xff767d88, 0xff999999); }
+    private int accentColor() { return 0xff82d8ff; }
+    private int accentTextColor() { return color(0xff06131c, 0xff06131c); }
+    private int ghostBgColor() { return color(0xff25282d, 0xffeeeeee); }
+    private int ghostStroke() { return color(0xff363a42, 0xffcccccc); }
+    private int inputBgColor() { return color(0xff202226, 0xffffffff); }
+    private int inputStroke() { return color(0xff2d3036, 0xffe0e0e0); }
+    private int headerIconColor() { return color(0xfff4f1ea, 0xff1a1a1a); }
+    private int progressBgColor() { return color(0xff363a42, 0xffcccccc); }
+    private int progressFillColor() { return 0xff82d8ff; }
+
     private static class MediaItem {
         final String uri;
         final String name;
@@ -1499,7 +1573,7 @@ public class MainActivity extends Activity {
 
         ZoomImageView(Activity activity) {
             super(activity);
-            setBackgroundColor(Color.BLACK);
+            setBackgroundColor(bgColor());
             scaleDetector = new ScaleGestureDetector(activity, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 @Override
                 public boolean onScale(ScaleGestureDetector detector) {
@@ -1552,7 +1626,7 @@ public class MainActivity extends Activity {
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
             if (bitmap == null) {
-                paint.setColor(0xfff4f1ea);
+                paint.setColor(textColor());
                 paint.setTextSize(dp(16));
                 canvas.drawText("没有图片", dp(24), getHeight() / 2f, paint);
                 return;
