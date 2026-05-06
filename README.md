@@ -106,10 +106,17 @@ pytest
 
 ## 在线打包
 
-推送到 GitHub `main` 分支后，GitHub Actions 会自动运行 `Package MaoqiuPlayer` 工作流，构建并上传：
+推送到 GitHub `main` 分支后，GitHub Actions 会自动运行 `Package MaoqiuPlayer` 工作流，构建并上传临时 artifacts。推送 `v*` 标签后，工作流会创建 GitHub Release 并上传：
 
 - `MaoqiuPlayer-macOS`
 - `MaoqiuPlayer-Windows`
 - `MaoqiuPlayer-Linux`
 
-也可以在 GitHub Actions 页面手动触发 `workflow_dispatch` 重新打包。
+示例：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+也可以在 GitHub Actions 页面手动触发 `workflow_dispatch` 重新打包，手动触发只上传 artifacts，不创建 Release。
