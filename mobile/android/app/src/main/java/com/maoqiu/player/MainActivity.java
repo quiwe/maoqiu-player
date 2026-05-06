@@ -29,6 +29,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -533,26 +534,56 @@ public class MainActivity extends Activity {
     private void showVideoPlayer(MediaItem item) {
         currentScreen = "video";
         setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR);
-        LinearLayout page = page();
-        page.addView(header(item.name, v -> {
-            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-            showLibrary(currentFilter);
-        }));
+
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(0xff000000);
 
         VideoView video = new VideoView(this);
-
-        // Resolve the best playable URI
         Uri videoUri = resolvePlayableUri(Uri.parse(item.uri));
         video.setVideoURI(videoUri);
+        root.addView(video, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // Progress bar + time display
-        LinearLayout progressRow = new LinearLayout(this);
-        progressRow.setOrientation(LinearLayout.HORIZONTAL);
-        progressRow.setGravity(Gravity.CENTER_VERTICAL);
-        progressRow.setPadding(dp(8), dp(4), dp(8), dp(4));
+        // --- Top overlay: back + title ---
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setPadding(dp(12), dp(10), dp(12), dp(10));
+        topBar.setBackgroundColor(0x99000000);
+        FrameLayout.LayoutParams topLp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        topLp.gravity = Gravity.TOP;
 
-        TextView timeCurrent = text("00:00", 12, false);
-        timeCurrent.setTextColor(subtextColor());
+        ImageButton backBtn = new ImageButton(this);
+        backBtn.setImageResource(android.R.drawable.ic_media_previous);
+        backBtn.setBackgroundColor(Color.TRANSPARENT);
+        backBtn.setColorFilter(0xffffffff);
+        backBtn.setOnClickListener(v -> {
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+            showLibrary(currentFilter);
+        });
+        topBar.addView(backBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
+
+        TextView titleText = new TextView(this);
+        titleText.setText(item.name);
+        titleText.setTextColor(0xffffffff);
+        titleText.setTextSize(16);
+        titleText.setSingleLine(true);
+        titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        topBar.addView(titleText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        root.addView(topBar, topLp);
+
+        // --- Bottom overlay: SeekBar + time ---
+        LinearLayout bottomBar = new LinearLayout(this);
+        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomBar.setGravity(Gravity.CENTER_VERTICAL);
+        bottomBar.setPadding(dp(12), dp(8), dp(12), dp(10));
+        bottomBar.setBackgroundColor(0x99000000);
+        FrameLayout.LayoutParams bottomLp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        bottomLp.gravity = Gravity.BOTTOM;
+
+        TextView timeCurrent = new TextView(this);
+        timeCurrent.setText("00:00");
+        timeCurrent.setTextColor(0xffffffff);
+        timeCurrent.setTextSize(12);
         timeCurrent.setMinWidth(dp(48));
 
         SeekBar seekBar = new SeekBar(this);
@@ -560,26 +591,45 @@ public class MainActivity extends Activity {
         seekLp.leftMargin = dp(8);
         seekLp.rightMargin = dp(8);
 
-        TextView timeTotal = text("00:00", 12, false);
-        timeTotal.setTextColor(subtextColor());
+        TextView timeTotal = new TextView(this);
+        timeTotal.setText("00:00");
+        timeTotal.setTextColor(0xffffffff);
+        timeTotal.setTextSize(12);
         timeTotal.setMinWidth(dp(48));
         timeTotal.setGravity(Gravity.END);
 
-        progressRow.addView(timeCurrent);
-        progressRow.addView(seekBar, seekLp);
-        progressRow.addView(timeTotal);
+        bottomBar.addView(timeCurrent);
+        bottomBar.addView(seekBar, seekLp);
+        bottomBar.addView(timeTotal);
+        root.addView(bottomBar, bottomLp);
+
+        // --- Control layer visibility ---
+        android.os.Handler hideHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        Runnable hideRunnable = () -> {
+            topBar.setVisibility(View.GONE);
+            bottomBar.setVisibility(View.GONE);
+        };
+        topBar.setVisibility(View.GONE);
+        bottomBar.setVisibility(View.GONE);
+
+        Runnable showControls = () -> {
+            topBar.setVisibility(View.VISIBLE);
+            bottomBar.setVisibility(View.VISIBLE);
+            hideHandler.removeCallbacks(hideRunnable);
+            hideHandler.postDelayed(hideRunnable, 3000);
+        };
 
         // SeekBar drag handler
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             boolean wasPlaying = false;
-            @Override public void onStartTrackingTouch(SeekBar sb) { wasPlaying = video.isPlaying(); video.pause(); }
+            @Override public void onStartTrackingTouch(SeekBar sb) { wasPlaying = video.isPlaying(); video.pause(); hideHandler.removeCallbacks(hideRunnable); }
             @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
                 if (fromUser) { video.seekTo(progress); timeCurrent.setText(formatDuration(progress)); }
             }
-            @Override public void onStopTrackingTouch(SeekBar sb) { if (wasPlaying) video.start(); }
+            @Override public void onStopTrackingTouch(SeekBar sb) { if (wasPlaying) video.start(); hideHandler.postDelayed(hideRunnable, 3000); }
         });
 
-        // Update progress periodically
+        // Progress updater
         android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         Runnable progressUpdater = new Runnable() {
             @Override public void run() {
@@ -596,6 +646,7 @@ public class MainActivity extends Activity {
             timeTotal.setText(formatDuration(dur));
             video.start();
             progressHandler.post(progressUpdater);
+            showControls.run();
         });
         video.setOnErrorListener((mp, what, extra) -> {
             progressHandler.removeCallbacks(progressUpdater);
@@ -608,38 +659,31 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "该视频暂时无法播放 (" + what + ", " + extra + ")", Toast.LENGTH_LONG).show();
             return true;
         });
-        video.setOnCompletionListener(mp -> { progressHandler.removeCallbacks(progressUpdater); seekBar.setProgress(seekBar.getMax()); timeCurrent.setText(formatDuration(seekBar.getMax())); });
+        video.setOnCompletionListener(mp -> {
+            progressHandler.removeCallbacks(progressUpdater);
+            seekBar.setProgress(seekBar.getMax());
+            timeCurrent.setText(formatDuration(seekBar.getMax()));
+            showControls.run();
+        });
 
-        LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
-        page.addView(video, videoLp);
-        page.addView(progressRow);
+        // Tap screen: toggle play/pause + show/hide controls
+        video.setOnClickListener(v -> {
+            if (topBar.getVisibility() == View.VISIBLE) {
+                hideHandler.removeCallbacks(hideRunnable);
+                topBar.setVisibility(View.GONE);
+                bottomBar.setVisibility(View.GONE);
+            } else {
+                showControls.run();
+            }
+            if (video.isPlaying()) {
+                video.pause();
+            } else {
+                video.start();
+                progressHandler.post(progressUpdater);
+            }
+        });
 
-        Button previous = ghostButton("上一项");
-        previous.setOnClickListener(v -> openNeighbor(-1));
-        Button play = button("播放/暂停");
-        play.setOnClickListener(v -> { if (video.isPlaying()) { video.pause(); } else { video.start(); progressHandler.post(progressUpdater); } });
-        Button next = ghostButton("下一项");
-        next.setOnClickListener(v -> openNeighbor(1));
-        Button speed = ghostButton(String.format(Locale.ROOT, "%.2fx", playbackSpeed));
-        speed.setOnClickListener(v -> { playbackSpeed = nextSpeed(playbackSpeed); speed.setText(String.format(Locale.ROOT, "%.2fx", playbackSpeed)); applyPlaybackSpeed(); });
-        Button full = ghostButton("全屏");
-        full.setOnClickListener(v -> setFullscreen(!fullscreen));
-        LinearLayout controls1 = row();
-        controls1.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
-        controls1.addView(play, wrapWithLeft(dp(8)));
-        controls1.addView(next, wrapWithLeft(dp(8)));
-        page.addView(controls1);
-
-        LinearLayout controls2 = row();
-        controls2.addView(speed, new LinearLayout.LayoutParams(0, dp(46), 1));
-        controls2.addView(full, wrapWithLeft(dp(8)));
-        Button external = ghostButton("系统播放器");
-        external.setOnClickListener(v -> openExternal(item));
-        controls2.addView(external, wrapWithLeft(dp(8)));
-        page.addView(controls2);
-
-        page.setBackgroundColor(bgColor());
-        setContentView(page);
+        setContentView(root);
     }
 
     private String formatDuration(int ms) {
@@ -651,8 +695,9 @@ public class MainActivity extends Activity {
 
     private void showImageViewer(MediaItem item) {
         currentScreen = "image";
-        LinearLayout page = page();
-        page.addView(header(item.name, v -> showLibrary(currentFilter)));
+
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(bgColor());
 
         ZoomImageView imageView = new ZoomImageView(this);
         try {
@@ -660,32 +705,82 @@ public class MainActivity extends Activity {
         } catch (IOException exc) {
             Toast.makeText(this, "无法显示该图片", Toast.LENGTH_LONG).show();
         }
-        // Image takes remaining space with weight=1
-        LinearLayout.LayoutParams imageLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
-        page.addView(imageView, imageLp);
+        root.addView(imageView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        LinearLayout controls1 = row();
-        Button previous = ghostButton("上一张");
-        previous.setOnClickListener(v -> openNeighbor(-1));
-        Button next = ghostButton("下一张");
-        next.setOnClickListener(v -> openNeighbor(1));
-        controls1.addView(previous, new LinearLayout.LayoutParams(0, dp(46), 1));
-        controls1.addView(next, new LinearLayout.LayoutParams(0, dp(46), 1));
-        page.addView(controls1);
+        // --- Top overlay: back + title ---
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setPadding(dp(12), dp(10), dp(12), dp(10));
+        topBar.setBackgroundColor(0x99000000);
+        FrameLayout.LayoutParams topLp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        topLp.gravity = Gravity.TOP;
 
-        LinearLayout controls2 = row();
-        Button fit = ghostButton("适应");
-        fit.setOnClickListener(v -> imageView.fitCenter());
-        Button actual = ghostButton("实际大小");
-        actual.setOnClickListener(v -> imageView.actualSize());
-        controls2.addView(fit, new LinearLayout.LayoutParams(0, dp(46), 1));
-        controls2.addView(actual, new LinearLayout.LayoutParams(0, dp(46), 1));
-        page.addView(controls2);
+        ImageButton backBtn = new ImageButton(this);
+        backBtn.setImageResource(android.R.drawable.ic_media_previous);
+        backBtn.setBackgroundColor(Color.TRANSPARENT);
+        backBtn.setColorFilter(0xffffffff);
+        backBtn.setOnClickListener(v -> showLibrary(currentFilter));
+        topBar.addView(backBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
-        // Direct setContentView — no ScrollView wrapping the image
-        page.setBackgroundColor(bgColor());
-        setContentView(page);
+        TextView titleText = new TextView(this);
+        titleText.setText(item.name);
+        titleText.setTextColor(0xffffffff);
+        titleText.setTextSize(16);
+        titleText.setSingleLine(true);
+        titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        topBar.addView(titleText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        root.addView(topBar, topLp);
+
+        // --- Control layer visibility ---
+        android.os.Handler hideHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        Runnable hideRunnable = () -> topBar.setVisibility(View.GONE);
+        Runnable showBar = () -> {
+            topBar.setVisibility(View.VISIBLE);
+            hideHandler.removeCallbacks(hideRunnable);
+            hideHandler.postDelayed(hideRunnable, 3000);
+        };
+        showBar.run();
+
+        // --- GestureDetector for swipe + tap ---
+        GestureDetector gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            private static final int SWIPE_THRESHOLD = 100;
+            private static final int SWIPE_VELOCITY_THRESHOLD = 100;
+
+            @Override
+            public boolean onSingleTapConfirmed(MotionEvent e) {
+                if (topBar.getVisibility() == View.VISIBLE) {
+                    hideHandler.removeCallbacks(hideRunnable);
+                    topBar.setVisibility(View.GONE);
+                } else {
+                    showBar.run();
+                }
+                return true;
+            }
+
+            @Override
+            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+                if (e1 == null || e2 == null) return false;
+                float diffX = e2.getX() - e1.getX();
+                float diffY = e2.getY() - e1.getY();
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > SWIPE_THRESHOLD && Math.abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
+                    if (diffX < 0) {
+                        openNeighbor(1);  // left swipe -> next
+                    } else {
+                        openNeighbor(-1); // right swipe -> previous
+                    }
+                    return true;
+                }
+                return false;
+            }
+        });
+
+        imageView.setOnTouchListener((v, event) -> {
+            gestureDetector.onTouchEvent(event);
+            return imageView.onTouchEvent(event);
+        });
+
+        setContentView(root);
     }
 
     private void showPackageDetails(MediaItem item) {
