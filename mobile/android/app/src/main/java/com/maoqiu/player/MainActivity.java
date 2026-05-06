@@ -2,8 +2,11 @@ package com.maoqiu.player;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
 import android.content.ClipData;
 import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.ContentUris;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -22,6 +25,7 @@ import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.text.InputType;
@@ -54,10 +58,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -67,6 +73,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKeyFactory;
@@ -306,9 +313,45 @@ public class MainActivity extends Activity {
             clearDirectory(new File(getCacheDir(), "media-packages"));
             Toast.makeText(this, "缓存已清理", Toast.LENGTH_SHORT).show();
         }));
+        page.addView(card("打包媒体", "将视频和图片打包为 .mqp 媒体包", v -> showPackageMediaDialog()));
         page.addView(card("数据库维护", "重建本机媒体索引", v -> scanLocalMedia(true)));
         page.addView(card("文件校验", "打开媒体包时会自动校验文件完整性", null));
         setScrollableContent(page);
+    }
+
+    private Uri resolvePlayableUri(Uri uri) {
+        if (!"content".equals(uri.getScheme())) {
+            return uri;
+        }
+        try (InputStream is = getContentResolver().openInputStream(uri)) {
+            if (is != null) {
+                return uri;
+            }
+        } catch (Exception ignored) {
+        }
+        String path = getPathFromUri(uri);
+        if (path != null && new File(path).exists()) {
+            return Uri.fromFile(new File(path));
+        }
+        return uri;
+    }
+
+    private String getPathFromUri(Uri uri) {
+        if ("content".equals(uri.getScheme())) {
+            try (Cursor cursor = getContentResolver().query(uri, new String[]{"_data"}, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int index = cursor.getColumnIndex("_data");
+                    if (index >= 0) {
+                        return cursor.getString(index);
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        if ("file".equals(uri.getScheme())) {
+            return uri.getPath();
+        }
+        return null;
     }
 
     private void showVideoPlayer(MediaItem item) {
@@ -321,15 +364,29 @@ public class MainActivity extends Activity {
         MediaController controller = new MediaController(this);
         controller.setAnchorView(video);
         video.setMediaController(controller);
-        video.setVideoURI(Uri.parse(item.uri));
+
+        // Resolve the best playable URI
+        Uri videoUri = resolvePlayableUri(Uri.parse(item.uri));
+        video.setVideoURI(videoUri);
+
         video.setOnPreparedListener(mp -> {
             currentMediaPlayer = mp;
             applyPlaybackSpeed();
             video.start();
         });
         video.setOnErrorListener((mp, what, extra) -> {
-            Toast.makeText(this, "该视频暂时无法在应用内播放", Toast.LENGTH_LONG).show();
-            return false;
+            // If content URI failed, try falling back to file path
+            if ("content".equals(videoUri.getScheme())) {
+                try {
+                    String path = getPathFromUri(videoUri);
+                    if (path != null && new java.io.File(path).exists()) {
+                        video.setVideoPath(path);
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+            }
+            Toast.makeText(this, "该视频暂时无法播放 (" + what + ")", Toast.LENGTH_LONG).show();
+            return true;
         });
         // Video takes remaining space with weight=1
         LinearLayout.LayoutParams videoLp = new LinearLayout.LayoutParams(
@@ -790,6 +847,160 @@ public class MainActivity extends Activity {
             }
         }
         return items;
+    }
+
+    private void showPackageMediaDialog() {
+        ArrayList<MediaItem> mediaItems = new ArrayList<>();
+        for (MediaItem item : library) {
+            if (KIND_VIDEO.equals(item.kind) || KIND_IMAGE.equals(item.kind)) {
+                mediaItems.add(item);
+            }
+        }
+        if (mediaItems.isEmpty()) {
+            Toast.makeText(this, "没有可打包的媒体，请先导入视频或图片", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] names = new String[mediaItems.size()];
+        boolean[] checked = new boolean[mediaItems.size()];
+        for (int i = 0; i < mediaItems.size(); i++) {
+            names[i] = mediaItems.get(i).name;
+            checked[i] = true;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("选择要打包的媒体")
+                .setMultiChoiceItems(names, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
+                .setPositiveButton("打包", (dialog, which) -> {
+                    ArrayList<MediaItem> selected = new ArrayList<>();
+                    for (int i = 0; i < checked.length; i++) {
+                        if (checked[i]) selected.add(mediaItems.get(i));
+                    }
+                    if (selected.isEmpty()) {
+                        Toast.makeText(this, "请至少选择一个媒体", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    startPackaging(selected);
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void startPackaging(ArrayList<MediaItem> items) {
+        ProgressDialog progressDialog = new ProgressDialog(this);
+        progressDialog.setMessage("正在打包 " + items.size() + " 个媒体...");
+        progressDialog.setCancelable(false);
+        progressDialog.show();
+        new Thread(() -> {
+            try {
+                String fileName = buildMediaPackage(items);
+                runOnUiThread(() -> {
+                    progressDialog.dismiss();
+                    Toast.makeText(this, "打包完成: " + fileName, Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    progressDialog.dismiss();
+                    Toast.makeText(this, "打包失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        }).start();
+    }
+
+    private String buildMediaPackage(ArrayList<MediaItem> items) throws Exception {
+        ByteArrayOutputStream zipBuffer = new ByteArrayOutputStream();
+        JSONArray itemsJson = new JSONArray();
+        Set<String> usedNames = new HashSet<>();
+        try (ZipOutputStream zos = new ZipOutputStream(zipBuffer)) {
+            int index = 0;
+            for (MediaItem item : items) {
+                index++;
+                String arcName = uniqueArchiveName(item.name, usedNames, index);
+                usedNames.add(arcName);
+                zos.putNextEntry(new ZipEntry(arcName));
+                try (InputStream is = getContentResolver().openInputStream(Uri.parse(item.uri))) {
+                    if (is == null) continue;
+                    byte[] buf = new byte[64 * 1024];
+                    int read;
+                    while ((read = is.read(buf)) != -1) {
+                        zos.write(buf, 0, read);
+                    }
+                }
+                zos.closeEntry();
+                JSONObject itemJson = new JSONObject();
+                itemJson.put("name", item.name);
+                itemJson.put("media_type", KIND_VIDEO.equals(item.kind) ? "video" : "image");
+                itemJson.put("path", arcName);
+                itemsJson.put(itemJson);
+            }
+        }
+        byte[] zipBytes = zipBuffer.toByteArray();
+        SecureRandom random = new SecureRandom();
+        byte[] salt = new byte[16];
+        byte[] nonce = new byte[12];
+        random.nextBytes(salt);
+        random.nextBytes(nonce);
+        PBEKeySpec keySpec = new PBEKeySpec(MQP_DEFAULT_PHRASE.toCharArray(), salt, 390000, 256);
+        byte[] key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(keySpec).getEncoded();
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(MQP_MAGIC.getBytes(StandardCharsets.UTF_8));
+        byte[] encryptedPayload = cipher.doFinal(zipBytes);
+        JSONObject header = new JSONObject();
+        header.put("format", MQP_FORMAT);
+        header.put("version", "1");
+        header.put("app", "MaoqiuPlayer");
+        header.put("package_name", "media-pack-" + System.currentTimeMillis());
+        header.put("created_at", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ROOT).format(new java.util.Date()));
+        header.put("item_count", items.size());
+        header.put("items", itemsJson);
+        header.put("suffix", ".mqp");
+        header.put("cipher", "AES-256-GCM");
+        header.put("kdf", "PBKDF2-HMAC-SHA256");
+        header.put("iterations", 390000);
+        header.put("salt", bytesToHex(salt));
+        header.put("nonce", bytesToHex(nonce));
+        header.put("payload_sha256", sha256(encryptedPayload));
+        byte[] headerBytes = header.toString().getBytes(StandardCharsets.UTF_8);
+        byte[] magicBytes = MQP_MAGIC.getBytes(StandardCharsets.UTF_8);
+        String fileName = "media-pack-" + System.currentTimeMillis() + ".mqp";
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+            values.put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream");
+            values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new IOException("无法创建文件");
+            try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                if (os == null) throw new IOException("无法写入文件");
+                os.write(magicBytes);
+                os.write(ByteBuffer.allocate(4).putInt(headerBytes.length).array());
+                os.write(headerBytes);
+                os.write(encryptedPayload);
+            }
+        } else {
+            File outputFile = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName);
+            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                fos.write(magicBytes);
+                fos.write(ByteBuffer.allocate(4).putInt(headerBytes.length).array());
+                fos.write(headerBytes);
+                fos.write(encryptedPayload);
+            }
+        }
+        return fileName;
+    }
+
+    private String uniqueArchiveName(String name, Set<String> usedNames, int index) {
+        if (!usedNames.contains(name)) return name;
+        int dot = name.lastIndexOf('.');
+        if (dot < 0) return name + "-" + index;
+        return name.substring(0, dot) + "-" + index + name.substring(dot);
+    }
+
+    private String bytesToHex(byte[] data) {
+        StringBuilder builder = new StringBuilder();
+        for (byte b : data) {
+            builder.append(String.format(Locale.ROOT, "%02x", b));
+        }
+        return builder.toString();
     }
 
     private ArrayList<MediaItem> filteredItems(String filter) {
