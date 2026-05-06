@@ -323,15 +323,17 @@ public class MainActivity extends Activity {
         if (!"content".equals(uri.getScheme())) {
             return uri;
         }
+        // Try file path first — VideoView works best with file:// URIs
+        String path = getPathFromUri(uri);
+        if (path != null && new File(path).exists()) {
+            return Uri.fromFile(new File(path));
+        }
+        // Fallback: verify content URI is readable
         try (InputStream is = getContentResolver().openInputStream(uri)) {
             if (is != null) {
                 return uri;
             }
         } catch (Exception ignored) {
-        }
-        String path = getPathFromUri(uri);
-        if (path != null && new File(path).exists()) {
-            return Uri.fromFile(new File(path));
         }
         return uri;
     }
@@ -375,7 +377,17 @@ public class MainActivity extends Activity {
             video.start();
         });
         video.setOnErrorListener((mp, what, extra) -> {
-            // If content URI failed, try falling back to file path
+            // If file:// URI failed, try content URI directly
+            if ("file".equals(videoUri.getScheme())) {
+                try {
+                    Uri contentUri = Uri.parse(item.uri);
+                    if ("content".equals(contentUri.getScheme())) {
+                        video.setVideoURI(contentUri);
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+            }
+            // If content URI failed, try resolving to file path
             if ("content".equals(videoUri.getScheme())) {
                 try {
                     String path = getPathFromUri(videoUri);
@@ -385,7 +397,7 @@ public class MainActivity extends Activity {
                     }
                 } catch (Exception ignored) {}
             }
-            Toast.makeText(this, "该视频暂时无法播放 (" + what + ")", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "该视频暂时无法播放 (" + what + ", " + extra + ")", Toast.LENGTH_LONG).show();
             return true;
         });
         // Video takes remaining space with weight=1
@@ -1549,6 +1561,8 @@ public class MainActivity extends Activity {
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
+            // Prevent parent from stealing touch events
+            getParent().requestDisallowInterceptTouchEvent(true);
             scaleDetector.onTouchEvent(event);
             if (!scaleDetector.isInProgress()) {
                 switch (event.getActionMasked()) {
