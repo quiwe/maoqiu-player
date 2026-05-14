@@ -574,7 +574,7 @@ public class MainActivity extends Activity {
         backBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
         backBtn.setOnClickListener(v -> {
             setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-            showLibrary(currentFilter);
+            onBackPressed();
         });
         topBar.addView(backBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
@@ -705,14 +705,12 @@ public class MainActivity extends Activity {
         android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
         // Progress updater
-        final Runnable[] progressUpdaterHolder = new Runnable[1];
         Runnable progressUpdater = new Runnable() {
             @Override public void run() {
                 if (video.isPlaying()) { int pos = video.getCurrentPosition(); seekBar.setProgress(pos); timeCurrent.setText(formatDuration(pos)); }
                 progressHandler.postDelayed(this, 500);
             }
         };
-        progressUpdaterHolder[0] = progressUpdater;
 
         Runnable hideRunnable = () -> {
             topBar.setVisibility(View.GONE);
@@ -748,14 +746,14 @@ public class MainActivity extends Activity {
                 video.pause();
             } else {
                 video.start();
-                progressHandler.post(progressUpdaterHolder[0]);
+                progressHandler.post(progressUpdater);
             }
             updatePlayPauseState.run();
         });
 
         centerPlayBtn.setOnClickListener(v -> {
             video.start();
-            progressHandler.post(progressUpdaterHolder[0]);
+            progressHandler.post(progressUpdater);
             updatePlayPauseState.run();
             hideHandler.removeCallbacks(hideRunnable);
             hideHandler.postDelayed(hideRunnable, 4000);
@@ -846,25 +844,28 @@ public class MainActivity extends Activity {
         root.addView(imageView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         // --- Top overlay: back + title ---
+        int statusBarHeight = getStatusBarHeight();
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(12), dp(10), dp(12), dp(10));
+        topBar.setPadding(dp(8), statusBarHeight + dp(6), dp(8), dp(6));
         topBar.setBackgroundColor(0x99000000);
         FrameLayout.LayoutParams topLp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
         topLp.gravity = Gravity.TOP;
 
-        ImageButton backBtn = new ImageButton(this);
-        backBtn.setImageResource(android.R.drawable.ic_media_previous);
+        Button backBtn = new Button(this);
+        backBtn.setText("◀");
+        backBtn.setTextSize(18);
+        backBtn.setTextColor(0xffffffff);
         backBtn.setBackgroundColor(Color.TRANSPARENT);
-        backBtn.setColorFilter(0xffffffff);
-        backBtn.setOnClickListener(v -> showLibrary(currentFilter));
-        topBar.addView(backBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        backBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
+        backBtn.setOnClickListener(v -> onBackPressed());
+        topBar.addView(backBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         TextView titleText = new TextView(this);
         titleText.setText(item.name);
         titleText.setTextColor(0xffffffff);
-        titleText.setTextSize(16);
+        titleText.setTextSize(15);
         titleText.setSingleLine(true);
         titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);
         topBar.addView(titleText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
@@ -876,7 +877,7 @@ public class MainActivity extends Activity {
         Runnable showBar = () -> {
             topBar.setVisibility(View.VISIBLE);
             hideHandler.removeCallbacks(hideRunnable);
-            hideHandler.postDelayed(hideRunnable, 3000);
+            hideHandler.postDelayed(hideRunnable, 4000);
         };
         showBar.run();
 
