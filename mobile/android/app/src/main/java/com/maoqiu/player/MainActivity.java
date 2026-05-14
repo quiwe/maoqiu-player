@@ -112,7 +112,7 @@ public class MainActivity extends Activity {
     private static final String ENCRYPTOR_LITE_PAYLOAD_BUNDLE = "tar_bundle";
     private static final String ENCRYPTOR_FILE_CIPHER_AES_GCM = "AES-256-GCM";
     private static final String ENCRYPTOR_LITE_KEY_PHRASE = "Maoqiu Secure Lite v1 built-in application key";
-    private static final String APP_VERSION = "0.1.17";
+    private static final String APP_VERSION = "0.1.18";
     private static final String KEY_THEME = "theme";
     private static final String THEME_DARK = "dark";
     private static final String THEME_LIGHT = "light";
@@ -556,81 +556,210 @@ public class MainActivity extends Activity {
         video.setVideoURI(videoUri);
         root.addView(video, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // --- Top overlay: back + title ---
+        // --- Top overlay: back + title + speed ---
+        int statusBarHeight = getStatusBarHeight();
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(12), dp(10), dp(12), dp(10));
+        topBar.setPadding(dp(8), statusBarHeight + dp(6), dp(8), dp(6));
         topBar.setBackgroundColor(0x99000000);
         FrameLayout.LayoutParams topLp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
         topLp.gravity = Gravity.TOP;
 
-        ImageButton backBtn = new ImageButton(this);
-        backBtn.setImageResource(android.R.drawable.ic_media_previous);
+        Button backBtn = new Button(this);
+        backBtn.setText("◀");
+        backBtn.setTextSize(18);
+        backBtn.setTextColor(0xffffffff);
         backBtn.setBackgroundColor(Color.TRANSPARENT);
-        backBtn.setColorFilter(0xffffffff);
+        backBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
         backBtn.setOnClickListener(v -> {
             setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
             showLibrary(currentFilter);
         });
-        topBar.addView(backBtn, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        topBar.addView(backBtn, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         TextView titleText = new TextView(this);
         titleText.setText(item.name);
         titleText.setTextColor(0xffffffff);
-        titleText.setTextSize(16);
+        titleText.setTextSize(15);
         titleText.setSingleLine(true);
         titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);
         topBar.addView(titleText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        Button speedBtn = new Button(this);
+        speedBtn.setText(String.format(Locale.ROOT, "%.2gx", playbackSpeed));
+        speedBtn.setTextSize(13);
+        speedBtn.setTextColor(0xffffffff);
+        speedBtn.setBackgroundColor(Color.TRANSPARENT);
+        speedBtn.setPadding(dp(10), dp(8), dp(10), dp(8));
+        speedBtn.setOnClickListener(v -> {
+            playbackSpeed = nextSpeed(playbackSpeed);
+            applyPlaybackSpeed();
+            speedBtn.setText(String.format(Locale.ROOT, "%.2gx", playbackSpeed));
+        });
+        topBar.addView(speedBtn, new LinearLayout.LayoutParams(dp(56), dp(48)));
         root.addView(topBar, topLp);
 
-        // --- Bottom overlay: SeekBar + time ---
+        // --- Center play/pause button ---
+        Button centerPlayBtn = new Button(this);
+        centerPlayBtn.setText("▶");
+        centerPlayBtn.setTextSize(36);
+        centerPlayBtn.setTextColor(0xccffffff);
+        centerPlayBtn.setBackgroundColor(0x66000000);
+        FrameLayout.LayoutParams centerLp = new FrameLayout.LayoutParams(dp(72), dp(72));
+        centerLp.gravity = Gravity.CENTER;
+        centerPlayBtn.setVisibility(View.GONE);
+        root.addView(centerPlayBtn, centerLp);
+
+        // --- Bottom overlay: prev + play/pause + next + fullscreen ---
+        int navBarHeight = getNavBarHeight();
         LinearLayout bottomBar = new LinearLayout(this);
-        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setGravity(Gravity.CENTER_VERTICAL);
-        bottomBar.setPadding(dp(12), dp(8), dp(12), dp(10));
+        bottomBar.setOrientation(LinearLayout.VERTICAL);
+        bottomBar.setPadding(dp(12), dp(6), dp(12), navBarHeight + dp(6));
         bottomBar.setBackgroundColor(0x99000000);
         FrameLayout.LayoutParams bottomLp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
         bottomLp.gravity = Gravity.BOTTOM;
+
+        // SeekBar row
+        LinearLayout seekRow = new LinearLayout(this);
+        seekRow.setOrientation(LinearLayout.HORIZONTAL);
+        seekRow.setGravity(Gravity.CENTER_VERTICAL);
 
         TextView timeCurrent = new TextView(this);
         timeCurrent.setText("00:00");
         timeCurrent.setTextColor(0xffffffff);
         timeCurrent.setTextSize(12);
-        timeCurrent.setMinWidth(dp(48));
+        timeCurrent.setMinWidth(dp(44));
 
         SeekBar seekBar = new SeekBar(this);
-        LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams(0, dp(28), 1);
-        seekLp.leftMargin = dp(8);
-        seekLp.rightMargin = dp(8);
+        LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams(0, dp(32), 1);
+        seekLp.leftMargin = dp(6);
+        seekLp.rightMargin = dp(6);
 
         TextView timeTotal = new TextView(this);
         timeTotal.setText("00:00");
         timeTotal.setTextColor(0xffffffff);
         timeTotal.setTextSize(12);
-        timeTotal.setMinWidth(dp(48));
+        timeTotal.setMinWidth(dp(44));
         timeTotal.setGravity(Gravity.END);
 
-        bottomBar.addView(timeCurrent);
-        bottomBar.addView(seekBar, seekLp);
-        bottomBar.addView(timeTotal);
+        seekRow.addView(timeCurrent);
+        seekRow.addView(seekBar, seekLp);
+        seekRow.addView(timeTotal);
+        bottomBar.addView(seekRow);
+
+        // Control buttons row
+        LinearLayout controlRow = new LinearLayout(this);
+        controlRow.setOrientation(LinearLayout.HORIZONTAL);
+        controlRow.setGravity(Gravity.CENTER);
+        controlRow.setPadding(0, dp(6), 0, 0);
+
+        Button prevBtn = new Button(this);
+        prevBtn.setText("⏮");
+        prevBtn.setTextSize(20);
+        prevBtn.setTextColor(0xffffffff);
+        prevBtn.setBackgroundColor(Color.TRANSPARENT);
+        prevBtn.setPadding(dp(16), dp(8), dp(16), dp(8));
+        prevBtn.setOnClickListener(v -> openNeighbor(-1));
+
+        Button playPauseBtn = new Button(this);
+        playPauseBtn.setText("⏸");
+        playPauseBtn.setTextSize(24);
+        playPauseBtn.setTextColor(0xffffffff);
+        playPauseBtn.setBackgroundColor(Color.TRANSPARENT);
+        playPauseBtn.setPadding(dp(20), dp(8), dp(20), dp(8));
+
+        Button nextBtn = new Button(this);
+        nextBtn.setText("⏭");
+        nextBtn.setTextSize(20);
+        nextBtn.setTextColor(0xffffffff);
+        nextBtn.setBackgroundColor(Color.TRANSPARENT);
+        nextBtn.setPadding(dp(16), dp(8), dp(16), dp(8));
+        nextBtn.setOnClickListener(v -> openNeighbor(1));
+
+        Button fullscreenBtn = new Button(this);
+        fullscreenBtn.setText("⛶");
+        fullscreenBtn.setTextSize(18);
+        fullscreenBtn.setTextColor(0xffffffff);
+        fullscreenBtn.setBackgroundColor(Color.TRANSPARENT);
+        fullscreenBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
+        fullscreenBtn.setOnClickListener(v -> {
+            if (fullscreen) {
+                setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                setFullscreen(false);
+            } else {
+                setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+                setFullscreen(true);
+            }
+        });
+
+        controlRow.addView(prevBtn, new LinearLayout.LayoutParams(0, dp(48), 1));
+        controlRow.addView(playPauseBtn, new LinearLayout.LayoutParams(0, dp(48), 1));
+        controlRow.addView(nextBtn, new LinearLayout.LayoutParams(0, dp(48), 1));
+        controlRow.addView(fullscreenBtn, new LinearLayout.LayoutParams(0, dp(48), 1));
+        bottomBar.addView(controlRow);
         root.addView(bottomBar, bottomLp);
 
         // --- Control layer visibility ---
         android.os.Handler hideHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+        // Progress updater
+        final Runnable[] progressUpdaterHolder = new Runnable[1];
+        Runnable progressUpdater = new Runnable() {
+            @Override public void run() {
+                if (video.isPlaying()) { int pos = video.getCurrentPosition(); seekBar.setProgress(pos); timeCurrent.setText(formatDuration(pos)); }
+                progressHandler.postDelayed(this, 500);
+            }
+        };
+        progressUpdaterHolder[0] = progressUpdater;
+
         Runnable hideRunnable = () -> {
             topBar.setVisibility(View.GONE);
             bottomBar.setVisibility(View.GONE);
+            centerPlayBtn.setVisibility(View.GONE);
         };
         topBar.setVisibility(View.GONE);
         bottomBar.setVisibility(View.GONE);
+        centerPlayBtn.setVisibility(View.GONE);
 
         Runnable showControls = () -> {
             topBar.setVisibility(View.VISIBLE);
             bottomBar.setVisibility(View.VISIBLE);
+            centerPlayBtn.setVisibility(video.isPlaying() ? View.GONE : View.VISIBLE);
             hideHandler.removeCallbacks(hideRunnable);
-            hideHandler.postDelayed(hideRunnable, 3000);
+            hideHandler.postDelayed(hideRunnable, 4000);
         };
+
+        Runnable updatePlayPauseState = () -> {
+            if (video.isPlaying()) {
+                playPauseBtn.setText("⏸");
+                centerPlayBtn.setVisibility(View.GONE);
+            } else {
+                playPauseBtn.setText("▶");
+                if (topBar.getVisibility() == View.VISIBLE) {
+                    centerPlayBtn.setVisibility(View.VISIBLE);
+                }
+            }
+        };
+
+        playPauseBtn.setOnClickListener(v -> {
+            if (video.isPlaying()) {
+                video.pause();
+            } else {
+                video.start();
+                progressHandler.post(progressUpdaterHolder[0]);
+            }
+            updatePlayPauseState.run();
+        });
+
+        centerPlayBtn.setOnClickListener(v -> {
+            video.start();
+            progressHandler.post(progressUpdaterHolder[0]);
+            updatePlayPauseState.run();
+            hideHandler.removeCallbacks(hideRunnable);
+            hideHandler.postDelayed(hideRunnable, 4000);
+        });
 
         // SeekBar drag handler
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -639,17 +768,8 @@ public class MainActivity extends Activity {
             @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
                 if (fromUser) { video.seekTo(progress); timeCurrent.setText(formatDuration(progress)); }
             }
-            @Override public void onStopTrackingTouch(SeekBar sb) { if (wasPlaying) video.start(); hideHandler.postDelayed(hideRunnable, 3000); }
+            @Override public void onStopTrackingTouch(SeekBar sb) { if (wasPlaying) video.start(); updatePlayPauseState.run(); hideHandler.postDelayed(hideRunnable, 4000); }
         });
-
-        // Progress updater
-        android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-        Runnable progressUpdater = new Runnable() {
-            @Override public void run() {
-                if (video.isPlaying()) { int pos = video.getCurrentPosition(); seekBar.setProgress(pos); timeCurrent.setText(formatDuration(pos)); }
-                progressHandler.postDelayed(this, 500);
-            }
-        };
 
         video.setOnPreparedListener(mp -> {
             currentMediaPlayer = mp;
@@ -660,6 +780,7 @@ public class MainActivity extends Activity {
             video.start();
             progressHandler.post(progressUpdater);
             showControls.run();
+            updatePlayPauseState.run();
         });
         video.setOnErrorListener((mp, what, extra) -> {
             progressHandler.removeCallbacks(progressUpdater);
@@ -676,27 +797,31 @@ public class MainActivity extends Activity {
             progressHandler.removeCallbacks(progressUpdater);
             seekBar.setProgress(seekBar.getMax());
             timeCurrent.setText(formatDuration(seekBar.getMax()));
+            updatePlayPauseState.run();
             showControls.run();
         });
 
-        // Tap screen: toggle play/pause + show/hide controls
+        // Tap video area: show/hide controls only (no auto toggle play/pause)
         video.setOnClickListener(v -> {
             if (topBar.getVisibility() == View.VISIBLE) {
                 hideHandler.removeCallbacks(hideRunnable);
-                topBar.setVisibility(View.GONE);
-                bottomBar.setVisibility(View.GONE);
+                hideRunnable.run();
             } else {
                 showControls.run();
-            }
-            if (video.isPlaying()) {
-                video.pause();
-            } else {
-                video.start();
-                progressHandler.post(progressUpdater);
             }
         });
 
         setContentView(root);
+    }
+
+    private int getStatusBarHeight() {
+        int resourceId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return resourceId > 0 ? getResources().getDimensionPixelSize(resourceId) : dp(24);
+    }
+
+    private int getNavBarHeight() {
+        int resourceId = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+        return resourceId > 0 ? getResources().getDimensionPixelSize(resourceId) : dp(12);
     }
 
     private String formatDuration(int ms) {
