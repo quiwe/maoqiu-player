@@ -178,6 +178,10 @@ public class MainActivity extends Activity {
         Window window = getWindow();
         window.setStatusBarColor(bgColor());
         window.setNavigationBarColor(bgColor());
+        if (Build.VERSION.SDK_INT >= 28) {
+            window.getAttributes().layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
         if (isLightTheme() && Build.VERSION.SDK_INT >= 23) {
             window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         } else {
