@@ -1,30 +1,53 @@
 import Foundation
 import UniformTypeIdentifiers
-import Compression
+import Security
+import ZIPFoundation
 
 // MARK: - Media Package (打包/解包 .mqp)
 enum MQPPackage {
     static let magic = "MAOQIU_PLAYER_ENC_V1"
     static let format = "MaoqiuPlayerMediaPackage"
+    static let liteMagic = Data([0x4d, 0x41, 0x4f, 0x4c, 0x49, 0x54, 0x45, 0x31, 0x00])
+    static let secureMagic = Data([0x4d, 0x41, 0x4f, 0x51, 0x49, 0x55, 0x31, 0x00])
+    static let liteFormat = "MAOQIU_LITE"
+    static let litePayloadFile = "file"
+    static let litePayloadBundle = "tar_bundle"
     
     // MARK: - Unpack
     static func unpack(fileURL: URL) throws -> [MediaItem] {
         let data = try Data(contentsOf: fileURL)
         let magicData = Data(magic.utf8)
-        
+
+        if data.starts(with: magicData) {
+            return try unpackPlayerPackage(data: data, fileURL: fileURL, magicData: magicData)
+        }
+        if data.starts(with: liteMagic) {
+            return try unpackLitePackage(data: data, fileURL: fileURL)
+        }
+        if data.starts(with: secureMagic) {
+            throw CryptoUtil.CryptoError.unsupportedSecurePackage
+        }
+        throw CryptoUtil.CryptoError.invalidPackage
+    }
+
+    static func isSupportedPackage(fileURL: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return false }
+        defer { try? handle.close() }
+        let maxMagicLength = max(Data(magic.utf8).count, max(liteMagic.count, secureMagic.count))
+        let prefix = handle.readData(ofLength: maxMagicLength)
+        return prefix.starts(with: Data(magic.utf8)) || prefix.starts(with: liteMagic) || prefix.starts(with: secureMagic)
+    }
+
+    private static func unpackPlayerPackage(data: Data, fileURL: URL, magicData: Data) throws -> [MediaItem] {
         guard data.count > magicData.count + 4 else {
             throw CryptoUtil.CryptoError.invalidPackage
         }
-        
-        // Verify magic
-        let fileMagic = data.prefix(magicData.count)
-        guard fileMagic == magicData else {
-            throw CryptoUtil.CryptoError.invalidPackage
-        }
-        
+
         // Read header length
         let headerLengthOffset = magicData.count
-        let headerLength: Int = data[headerLengthOffset..<headerLengthOffset+4].withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let headerLength = Int(data[headerLengthOffset..<headerLengthOffset + 4].reduce(UInt32(0)) { partial, byte in
+            (partial << 8) | UInt32(byte)
+        })
         
         let headerOffset = headerLengthOffset + 4
         guard headerOffset + headerLength <= data.count else {
@@ -53,8 +76,12 @@ enum MQPPackage {
         }
         
         // Decrypt
-        let salt = CryptoUtil.hexToBytes(header["salt"] as! String)
-        let nonce = CryptoUtil.hexToBytes(header["nonce"] as! String)
+        guard let saltHex = header["salt"] as? String,
+              let nonceHex = header["nonce"] as? String else {
+            throw CryptoUtil.CryptoError.invalidPackage
+        }
+        let salt = CryptoUtil.hexToBytes(saltHex)
+        let nonce = CryptoUtil.hexToBytes(nonceHex)
         let iterations = header["iterations"] as? Int ?? 390000
         
         let zipData = try CryptoUtil.decryptPayload(Data(encryptedPayload), salt: salt, nonce: nonce, iterations: iterations)
@@ -70,17 +97,66 @@ enum MQPPackage {
         let extracted = try unzipData(zipData, to: tempDir)
         return extracted
     }
+
+    private static func unpackLitePackage(data: Data, fileURL: URL) throws -> [MediaItem] {
+        guard data.count > liteMagic.count + 4 else {
+            throw CryptoUtil.CryptoError.invalidPackage
+        }
+        let headerLengthOffset = liteMagic.count
+        let headerLength = Int(data[headerLengthOffset..<headerLengthOffset + 4].reduce(UInt32(0)) { partial, byte in
+            (partial << 8) | UInt32(byte)
+        })
+        let headerOffset = headerLengthOffset + 4
+        guard headerOffset + headerLength <= data.count else {
+            throw CryptoUtil.CryptoError.invalidPackage
+        }
+
+        let headerData = data[headerOffset..<headerOffset + headerLength]
+        guard let header = try? JSONSerialization.jsonObject(with: headerData) as? [String: Any],
+              header["format"] as? String == liteFormat,
+              (header["version"] as? Int ?? 0) == 1,
+              let nonceText = header["payload_nonce"] as? String,
+              let nonce = Data(base64Encoded: nonceText) else {
+            throw CryptoUtil.CryptoError.invalidPackage
+        }
+
+        let payloadOffset = headerOffset + headerLength
+        let encryptedPayload = Data(data[payloadOffset...])
+        let plain = try CryptoUtil.decryptRawAESGCM(encryptedPayload, key: CryptoUtil.liteAppKey, nonce: nonce)
+        let expectedSha = header["original_sha256"] as? String ?? ""
+        if !expectedSha.isEmpty, CryptoUtil.sha256(plain) != expectedSha {
+            throw CryptoUtil.CryptoError.checksumFailed
+        }
+
+        let tempDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("media-packages")
+            .appendingPathComponent(sanitizeFileName(fileURL.deletingPathExtension().lastPathComponent))
+        try? FileManager.default.removeItem(at: tempDir)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let payloadType = header["payload_type"] as? String ?? litePayloadFile
+        if payloadType == litePayloadBundle {
+            return try untarData(plain, to: tempDir)
+        }
+
+        let originalName = sanitizeFileName((header["original_filename"] as? String) ?? fileURL.lastPathComponent)
+        let fileURL = tempDir.appendingPathComponent(originalName)
+        try plain.write(to: fileURL)
+        return mediaItems(for: [fileURL])
+    }
     
     // MARK: - Pack
     static func pack(items: [(url: URL, name: String)], packageName: String, suffix: String = ".mqp") throws -> URL {
         // Create zip data
         var zipEntries: [(name: String, data: Data)] = []
         var usedNames = Set<String>()
+        var archiveNames: [String] = []
         
         for (index, item) in items.enumerated() {
             let data = try Data(contentsOf: item.url)
             let arcName = uniqueArchiveName(item.name, usedNames: &usedNames, index: index + 1)
             usedNames.insert(arcName)
+            archiveNames.append(arcName)
             zipEntries.append((name: arcName, data: data))
         }
         
@@ -89,19 +165,20 @@ enum MQPPackage {
         // Encrypt
         var salt = Data(count: 16)
         var nonce = Data(count: 12)
-        _ = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
-        _ = nonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 12, $0.baseAddress!) }
+        guard salt.withUnsafeMutableBytes({ SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }) == errSecSuccess,
+              nonce.withUnsafeMutableBytes({ SecRandomCopyBytes(kSecRandomDefault, 12, $0.baseAddress!) }) == errSecSuccess else {
+            throw CryptoUtil.CryptoError.encryptionFailed
+        }
         
         let encryptedPayload = try CryptoUtil.encryptPayload(zipData, salt: salt, nonce: nonce)
         
         // Build header
         var itemsArray: [[String: Any]] = []
         for (index, item) in items.enumerated() {
-            let arcName = Array(usedNames)[index % usedNames.count]
             itemsArray.append([
                 "name": item.name,
                 "media_type": classifyKind(fileName: item.name, mimeType: "").rawValue == "video" ? "video" : "image",
-                "path": arcName
+                "path": archiveNames[index]
             ])
         }
         
@@ -144,66 +221,112 @@ enum MQPPackage {
     // MARK: - Helpers
     private static func unzipData(_ data: Data, to directory: URL) throws -> [MediaItem] {
         var items: [MediaItem] = []
-        
-        // Use Process to unzip (iOS doesn't have ZipArchive natively, use command line)
-        let zipPath = directory.appendingPathComponent("_temp.zip")
-        try data.write(to: zipPath)
-        
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", zipPath.path, "-d", directory.path]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        
-        try? FileManager.default.removeItem(at: zipPath)
-        
-        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
-            return items
-        }
-        
-        for case let fileURL as URL in enumerator {
-            guard !fileURL.hasDirectoryPath else { continue }
-            let name = fileURL.lastPathComponent
-            guard name != "_temp.zip" else { continue }
-            let kind = classifyKind(fileName: name, mimeType: "")
-            if kind == .video || kind == .image {
-                let item = MediaItem(
-                    uri: fileURL.absoluteString,
-                    name: name,
-                    mimeType: UTType(filenameExtension: fileNameExtension(name))?.preferredMIMEType ?? "",
-                    kind: kind,
-                    source: "媒体包"
-                )
-                items.append(item)
-            }
+        let archive = try Archive(data: data, accessMode: .read)
+        var usedNames = Set<String>()
+
+        for entry in archive {
+            guard entry.type == .file,
+                  let safeName = safeEntryFileName(entry.path) else { continue }
+
+            let extractedName = uniqueArchiveName(safeName, usedNames: &usedNames, index: usedNames.count + 1)
+            usedNames.insert(extractedName)
+            let fileURL = directory.appendingPathComponent(extractedName)
+            _ = try archive.extract(entry, to: fileURL)
+            items.append(contentsOf: mediaItems(for: [fileURL]))
         }
         
         return items
     }
+
+    private static func untarData(_ data: Data, to directory: URL) throws -> [MediaItem] {
+        let bytes = [UInt8](data)
+        var offset = 0
+        var items: [MediaItem] = []
+        var usedNames = Set<String>()
+
+        while offset + 512 <= bytes.count {
+            if bytes[offset..<offset + 512].allSatisfy({ $0 == 0 }) {
+                break
+            }
+            let entryName = tarString(bytes, offset: offset, length: 100)
+            let size = tarSize(bytes, offset: offset + 124)
+            let type = bytes[offset + 156]
+            offset += 512
+            guard size >= 0, offset + size <= bytes.count else {
+                throw CryptoUtil.CryptoError.invalidPackage
+            }
+            if (type == 0 || type == 48), size > 0, let safeName = safeEntryFileName(entryName) {
+                let extractedName = uniqueArchiveName(safeName, usedNames: &usedNames, index: usedNames.count + 1)
+                usedNames.insert(extractedName)
+                let fileURL = directory.appendingPathComponent(extractedName)
+                try Data(bytes[offset..<offset + size]).write(to: fileURL)
+                items.append(contentsOf: mediaItems(for: [fileURL]))
+            }
+            offset += ((size + 511) / 512) * 512
+        }
+        return items
+    }
+
+    private static func mediaItems(for urls: [URL]) -> [MediaItem] {
+        urls.compactMap { fileURL in
+            let name = fileURL.lastPathComponent
+            let kind = classifyKind(fileName: name, mimeType: "")
+            guard kind == .video || kind == .image else { return nil }
+            return MediaItem(
+                uri: fileURL.absoluteString,
+                name: name,
+                mimeType: UTType(filenameExtension: fileNameExtension(name))?.preferredMIMEType ?? "",
+                kind: kind,
+                source: "媒体包"
+            )
+        }
+    }
+
+    private static func tarString(_ bytes: [UInt8], offset: Int, length: Int) -> String {
+        let end = min(offset + length, bytes.count)
+        var cursor = offset
+        while cursor < end, bytes[cursor] != 0 {
+            cursor += 1
+        }
+        return String(data: Data(bytes[offset..<cursor]), encoding: .utf8) ?? ""
+    }
+
+    private static func tarSize(_ bytes: [UInt8], offset: Int) -> Int {
+        let end = min(offset + 12, bytes.count)
+        var size = 0
+        for index in offset..<end {
+            let value = bytes[index]
+            if value == 0 || value == 32 {
+                continue
+            }
+            if value < 48 || value > 55 {
+                break
+            }
+            size = (size * 8) + Int(value - 48)
+        }
+        return size
+    }
     
     private static func createZipData(entries: [(name: String, data: Data)]) throws -> Data {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        
+        let archive = try Archive(accessMode: .create)
+
         for entry in entries {
-            let fileURL = tempDir.appendingPathComponent(entry.name)
-            try entry.data.write(to: fileURL)
+            try archive.addEntry(
+                with: entry.name,
+                type: .file,
+                uncompressedSize: Int64(entry.data.count),
+                compressionMethod: .deflate
+            ) { position, size in
+                let start = Int(position)
+                let end = min(start + size, entry.data.count)
+                return entry.data.subdata(in: start..<end)
+            }
         }
-        
-        let zipURL = tempDir.appendingPathComponent("archive.zip")
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-        process.arguments = ["-j", zipURL.path] + entries.map(\.name)
-        process.currentDirectoryURL = tempDir
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        
-        return try Data(contentsOf: zipURL)
+
+        guard let archiveData = archive.data else {
+            throw CryptoUtil.CryptoError.invalidPackage
+        }
+        return archiveData
     }
     
     private static func uniqueArchiveName(_ name: String, usedNames: inout Set<String>, index: Int) -> String {
@@ -212,5 +335,15 @@ enum MQPPackage {
         let base = (name as NSString).deletingPathExtension
         if ext.isEmpty { return "\(base)-\(index)" }
         return "\(base)-\(index).\(ext)"
+    }
+
+    private static func safeEntryFileName(_ path: String) -> String? {
+        guard let name = path.split(separator: "/").last.map(String.init),
+              !name.isEmpty,
+              name != ".",
+              name != ".." else {
+            return nil
+        }
+        return name
     }
 }

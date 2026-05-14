@@ -8,6 +8,7 @@ enum CryptoUtil {
     static let format = "MaoqiuPlayerMediaPackage"
     static let defaultPhrase = "MaoqiuPlayer local media package v1"
     static let defaultIterations = 390000
+    static let liteAppKey = SHA256.hash(data: Data("Maoqiu Secure Lite v1 built-in application key".utf8)).withUnsafeBytes { Data($0) }
     
     // MARK: - PBKDF2 Key Derivation (CommonCrypto, compatible with Java PBKDF2WithHmacSHA256)
     static func pbkdf2(password: String, salt: Data, iterations: Int = defaultIterations, keyLength: Int = 32) -> Data? {
@@ -36,10 +37,12 @@ enum CryptoUtil {
         
         let symmetricKey = SymmetricKey(data: key)
         let aad = Data(magic.utf8)
-        let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonce), ciphertext: payload.dropLast(16), tag: payload.suffix(16))
-        
-        // Use raw AES-GCM with AAD via CommonCrypto for AAD support
-        return try decryptAESGCM(key: key, nonce: nonce, ciphertext: payload.dropLast(16), tag: payload.suffix(16), aad: aad)
+        let sealedBox = try AES.GCM.SealedBox(
+            nonce: AES.GCM.Nonce(data: nonce),
+            ciphertext: Data(payload.dropLast(16)),
+            tag: Data(payload.suffix(16))
+        )
+        return try AES.GCM.open(sealedBox, using: symmetricKey, authenticating: aad)
     }
     
     // MARK: - Encrypt (加密为 .mqp payload)
@@ -48,158 +51,21 @@ enum CryptoUtil {
             throw CryptoError.keyDerivationFailed
         }
         
+        let symmetricKey = SymmetricKey(data: key)
         let aad = Data(magic.utf8)
-        return try encryptAESGCM(key: key, nonce: nonce, plaintext: data, aad: aad)
+        let sealedBox = try AES.GCM.seal(data, using: symmetricKey, nonce: AES.GCM.Nonce(data: nonce), authenticating: aad)
+        var output = sealedBox.ciphertext
+        output.append(sealedBox.tag)
+        return output
     }
-    
-    // MARK: - Low-level AES-GCM with AAD via CommonCrypto
-    private static func encryptAESGCM(key: Data, nonce: Data, plaintext: Data, aad: Data) throws -> Data {
-        let keyBytes = [UInt8](key)
-        let nonceBytes = [UInt8](nonce)
-        let plainBytes = [UInt8](plaintext)
-        let aadBytes = [UInt8](aad)
-        
-        var tagLength = 16
-        var ciphertext = [UInt8](repeating: 0, count: plainBytes.count + tagLength)
-        var ciphertextLength = 0
-        
-        // Create context
-        let status = keyBytes.withUnsafeBufferPointer { keyPtr in
-            nonceBytes.withUnsafeBufferPointer { noncePtr in
-                plainBytes.withUnsafeBufferPointer { plainPtr in
-                    aadBytes.withUnsafeBufferPointer { aadPtr in
-                        ciphertext.withUnsafeMutableBufferPointer { cipherPtr in
-                            var cryptorRef: CCCryptorRef?
-                            
-                            var createStatus = CCCryptorCreateWithMode(
-                                CCOperation(kCCEncrypt),
-                                CCMode(kCCModeGCM),
-                                CCAlgorithm(kCCAlgorithmAES),
-                                CCPadding(ccNoPadding),
-                                nil,
-                                keyPtr.baseAddress, keyBytes.count,
-                                nil, 0,
-                                0, 0,
-                                &cryptorRef
-                            )
-                            guard createStatus == kCCSuccess, let cryptor = cryptorRef else { return createStatus }
-                            
-                            // Set IV
-                            createStatus = CCCryptorAddParameter(cryptor, kCCParameterIV, noncePtr.baseAddress, nonceBytes.count)
-                            guard createStatus == kCCSuccess else { return createStatus }
-                            
-                            // Add AAD
-                            if !aadBytes.isEmpty {
-                                createStatus = CCCryptorAddParameter(cryptor, kCCParameterAuthData, aadPtr.baseAddress, aadBytes.count)
-                                guard createStatus == kCCSuccess else { return createStatus }
-                            }
-                            
-                            // Encrypt
-                            var moved = 0
-                            createStatus = CCCryptorUpdate(cryptor, plainPtr.baseAddress, plainBytes.count, cipherPtr.baseAddress, cipherBytes.count, &moved)
-                            ciphertextLength = moved
-                            guard createStatus == kCCSuccess else { return createStatus }
-                            
-                            // Final
-                            var finalMoved = 0
-                            createStatus = CCCryptorFinal(cryptor, cipherPtr.baseAddress! + moved, cipherBytes.count - moved, &finalMoved)
-                            ciphertextLength += finalMoved
-                            guard createStatus == kCCSuccess else { return createStatus }
-                            
-                            // Get tag
-                            var tag = [UInt8](repeating: 0, count: 16)
-                            createStatus = tag.withUnsafeMutableBufferPointer { tagPtr in
-                                CCCryptorGetParameter(cryptor, kCCParameterAuthTag, tagPtr.baseAddress!, &tagLength)
-                            }
-                            guard createStatus == kCCSuccess else { return createStatus }
-                            
-                            CCCryptorRelease(cryptor)
-                            
-                            // Append tag to ciphertext
-                            for i in 0..<16 {
-                                cipherPtr[ciphertextLength + i] = tag[i]
-                            }
-                            ciphertextLength += 16
-                            
-                            return kCCSuccess
-                        }
-                    }
-                }
-            }
-        }
-        
-        guard status == kCCSuccess else { throw CryptoError.encryptionFailed }
-        return Data(ciphertext.prefix(ciphertextLength))
-    }
-    
-    private static func decryptAESGCM(key: Data, nonce: Data, ciphertext: Data, tag: Data, aad: Data) throws -> Data {
-        let keyBytes = [UInt8](key)
-        let nonceBytes = [UInt8](nonce)
-        let cipherBytes = [UInt8](ciphertext)
-        let tagBytes = [UInt8](tag)
-        let aadBytes = [UInt8](aad)
-        
-        var plaintext = [UInt8](repeating: 0, count: cipherBytes.count + 16)
-        var plaintextLength = 0
-        
-        let status = keyBytes.withUnsafeBufferPointer { keyPtr in
-            nonceBytes.withUnsafeBufferPointer { noncePtr in
-                cipherBytes.withUnsafeBufferPointer { cipherPtr in
-                    aadBytes.withUnsafeBufferPointer { aadPtr in
-                        tagBytes.withUnsafeBufferPointer { tagPtr in
-                            plaintext.withUnsafeMutableBufferPointer { plainPtr in
-                                var cryptorRef: CCCryptorRef?
-                                
-                                var createStatus = CCCryptorCreateWithMode(
-                                    CCOperation(kCCDecrypt),
-                                    CCMode(kCCModeGCM),
-                                    CCAlgorithm(kCCAlgorithmAES),
-                                    CCPadding(ccNoPadding),
-                                    nil,
-                                    keyPtr.baseAddress, keyBytes.count,
-                                    nil, 0,
-                                    0, 0,
-                                    &cryptorRef
-                                )
-                                guard createStatus == kCCSuccess, let cryptor = cryptorRef else { return createStatus }
-                                
-                                // Set IV
-                                createStatus = CCCryptorAddParameter(cryptor, kCCParameterIV, noncePtr.baseAddress, nonceBytes.count)
-                                guard createStatus == kCCSuccess else { return createStatus }
-                                
-                                // Add AAD
-                                if !aadBytes.isEmpty {
-                                    createStatus = CCCryptorAddParameter(cryptor, kCCParameterAuthData, aadPtr.baseAddress, aadBytes.count)
-                                    guard createStatus == kCCSuccess else { return createStatus }
-                                }
-                                
-                                // Set tag
-                                createStatus = CCCryptorAddParameter(cryptor, kCCParameterAuthTag, tagPtr.baseAddress, tagBytes.count)
-                                guard createStatus == kCCSuccess else { return createStatus }
-                                
-                                // Decrypt
-                                var moved = 0
-                                createStatus = CCCryptorUpdate(cryptor, cipherPtr.baseAddress, cipherBytes.count, plainPtr.baseAddress, plaintext.count, &moved)
-                                plaintextLength = moved
-                                guard createStatus == kCCSuccess else { return createStatus }
-                                
-                                // Final
-                                var finalMoved = 0
-                                createStatus = CCCryptorFinal(cryptor, plainPtr.baseAddress! + moved, plaintext.count - moved, &finalMoved)
-                                plaintextLength += finalMoved
-                                
-                                CCCryptorRelease(cryptor)
-                                
-                                return createStatus
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        guard status == kCCSuccess else { throw CryptoError.decryptionFailed }
-        return Data(plaintext.prefix(plaintextLength))
+
+    static func decryptRawAESGCM(_ payload: Data, key: Data, nonce: Data) throws -> Data {
+        let sealedBox = try AES.GCM.SealedBox(
+            nonce: AES.GCM.Nonce(data: nonce),
+            ciphertext: Data(payload.dropLast(16)),
+            tag: Data(payload.suffix(16))
+        )
+        return try AES.GCM.open(sealedBox, using: SymmetricKey(data: key))
     }
     
     // MARK: - SHA-256
@@ -233,6 +99,7 @@ enum CryptoUtil {
         case decryptionFailed
         case invalidPackage
         case checksumFailed
+        case unsupportedSecurePackage
         
         var errorDescription: String? {
             switch self {
@@ -241,6 +108,7 @@ enum CryptoUtil {
             case .decryptionFailed: return "解密失败"
             case .invalidPackage: return "无效的媒体包"
             case .checksumFailed: return "文件校验失败"
+            case .unsupportedSecurePackage: return "该加密文件需要用户名和密码，请使用桌面版打开"
             }
         }
     }

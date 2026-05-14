@@ -95,7 +95,7 @@ struct PackageDetailView: View {
             } catch {
                 await MainActor.run {
                     isLoading = false
-                    errorMessage = "无法打开该媒体包，请检查文件完整性"
+                    errorMessage = error.localizedDescription
                     showError = true
                 }
             }

@@ -210,13 +210,15 @@ class MediaPackagePage(QWidget):
         info = read_media_package_info(path)
         lines = [
             f"名称：{info.package_name}",
+            f"格式：{info.format_name}",
             f"文件：{info.path}",
             f"创建时间：{info.created_at}",
             f"项目数量：{info.item_count}",
             f"包体大小：{format_bytes(info.payload_size)}",
-            "",
-            "内容：",
         ]
+        if info.requires_credentials:
+            lines.append("提示：该文件需要用户名和密码，打开后才能读取内部媒体信息。")
+        lines.extend(["", "内容："])
         for item in info.items:
             lines.append(f"- {item.get('name')}  {item.get('media_type')}  {format_bytes(int(item.get('size', 0)))}")
         self.info_view.setPlainText("\n".join(lines))

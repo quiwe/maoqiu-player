@@ -3,7 +3,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
 from maoqiu_player.constants import (
     APP_CHINESE_NAME,
     APP_DISPLAY_NAME,
+    APP_VERSION,
     DEFAULT_MEDIA_PACKAGE_SUFFIX,
     PACKAGE_CACHE_DIR,
     SUPPORTED_IMAGE_EXTENSIONS,
@@ -30,8 +33,14 @@ from maoqiu_player.constants import (
     SUPPORTED_VIDEO_EXTENSIONS,
 )
 from maoqiu_player.media_library import MediaLibrary
-from maoqiu_player.media_package import MediaPackageError, extract_media_package, is_media_package
+from maoqiu_player.media_package import (
+    MediaPackageError,
+    extract_media_package,
+    is_media_package,
+    media_package_requires_credentials,
+)
 from maoqiu_player.models import classify_media_type
+from maoqiu_player.updater import InstallerDownloadWorker, UpdateCheckWorker, UpdateInfo, default_download_path
 
 from .advanced_tools_page import AdvancedToolsPage
 from .home_page import HomePage
@@ -56,6 +65,9 @@ class MainWindow(QMainWindow):
         self.sidebar_buttons: dict[str, QPushButton] = {}
         self.stack = QStackedWidget()
         self.search = QLineEdit()
+        self.update_worker: UpdateCheckWorker | None = None
+        self.download_worker: InstallerDownloadWorker | None = None
+        self.download_progress: QProgressDialog | None = None
 
         self.home_page = HomePage()
         self.library_page = LibraryPage(self.library)
@@ -70,6 +82,7 @@ class MainWindow(QMainWindow):
         self._wire()
         self.refresh_home()
         self.navigate("home")
+        QTimer.singleShot(1200, self.check_for_updates)
 
     def _build(self) -> None:
         root = QWidget()
@@ -224,8 +237,103 @@ class MainWindow(QMainWindow):
     def refresh_home(self) -> None:
         self.home_page.update_overview(self.library.stats(), self.library.recent_items(limit=5))
 
+    def check_for_updates(self) -> None:
+        if self.update_worker is not None:
+            return
+        self.update_worker = UpdateCheckWorker()
+        self.update_worker.update_found.connect(self._handle_update_found)
+        self.update_worker.failed.connect(lambda _message: None)
+        self.update_worker.finished.connect(self.update_worker.deleteLater)
+        self.update_worker.finished.connect(lambda: setattr(self, "update_worker", None))
+        self.update_worker.start()
+
+    def _handle_update_found(self, update: UpdateInfo) -> None:
+        if update.asset is None:
+            response = QMessageBox.question(
+                self,
+                "发现新版本",
+                f"发现新版本 {update.tag_name}，但没有找到当前平台的安装包。\n是否打开 GitHub 发布页面？",
+            )
+            if response == QMessageBox.StandardButton.Yes and update.release_url:
+                QDesktopServices.openUrl(QUrl(update.release_url))
+            return
+
+        message = (
+            f"发现新版本 {update.tag_name}。\n\n"
+            f"当前版本：{APP_VERSION}\n"
+            f"安装包：{update.asset.name}\n\n"
+            "是否现在下载安装包？"
+        )
+        response = QMessageBox.question(self, "发现新版本", message)
+        if response == QMessageBox.StandardButton.Yes:
+            self._download_update(update)
+
+    def _download_update(self, update: UpdateInfo) -> None:
+        if update.asset is None or self.download_worker is not None:
+            return
+        output_path = default_download_path(update.asset.name)
+        self.download_progress = QProgressDialog("正在下载安装包...", "取消", 0, 100, self)
+        self.download_progress.setWindowTitle("下载更新")
+        self.download_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self.download_progress.setMinimumDuration(0)
+        self.download_progress.setValue(0)
+
+        self.download_worker = InstallerDownloadWorker(update.asset, output_path)
+        self.download_worker.progress_changed.connect(self._handle_download_progress)
+        self.download_worker.finished_download.connect(self._handle_download_finished)
+        self.download_worker.failed.connect(self._handle_download_failed)
+        self.download_worker.finished.connect(self.download_worker.deleteLater)
+        self.download_worker.finished.connect(lambda: setattr(self, "download_worker", None))
+        self.download_progress.canceled.connect(self.download_worker.cancel)
+        self.download_worker.start()
+
+    def _handle_download_progress(self, downloaded: int, total: int) -> None:
+        if self.download_progress is None:
+            return
+        if total > 0:
+            percent = min(100, int(downloaded * 100 / total))
+            self.download_progress.setRange(0, 100)
+            self.download_progress.setValue(percent)
+            self.download_progress.setLabelText(f"正在下载安装包... {percent}%")
+        else:
+            self.download_progress.setRange(0, 0)
+            self.download_progress.setLabelText("正在下载安装包...")
+
+    def _handle_download_finished(self, path: Path) -> None:
+        if self.download_progress is not None:
+            self.download_progress.close()
+            self.download_progress = None
+        response = QMessageBox.question(
+            self,
+            "下载完成",
+            f"安装包已下载到：\n{path}\n\n是否现在打开安装包？",
+        )
+        if response == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _handle_download_failed(self, message: str) -> None:
+        if self.download_progress is not None:
+            self.download_progress.close()
+            self.download_progress = None
+        QMessageBox.warning(self, "下载失败", message or "下载安装包失败，请稍后重试。")
+
     def _open_media_package(self, package_path: Path) -> None:
         cache_dir = PACKAGE_CACHE_DIR / f"{package_path.stem}-{int(time.time())}"
+        if media_package_requires_credentials(package_path):
+            username, ok = QInputDialog.getText(self, "打开加密文件", "用户名")
+            if not ok:
+                return
+            password, ok = QInputDialog.getText(self, "打开加密文件", "密码", QLineEdit.EchoMode.Password)
+            if not ok:
+                return
+            try:
+                extracted = extract_media_package(package_path, cache_dir, username=username, password=password)
+            except MediaPackageError as exc:
+                QMessageBox.warning(self, "打开加密文件", str(exc))
+                return
+            self._open_extracted_media(extracted)
+            return
+
         try:
             extracted = extract_media_package(package_path, cache_dir)
         except MediaPackageError:
@@ -238,6 +346,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "打开媒体包", str(exc))
                 return
 
+        self._open_extracted_media(extracted)
+
+    def _open_extracted_media(self, extracted: list[Path]) -> None:
         imported = self.library.import_paths(extracted)
         self.library_page.refresh()
         self.refresh_home()

@@ -29,6 +29,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.util.Base64;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -104,7 +105,14 @@ public class MainActivity extends Activity {
     private static final String MQP_MAGIC = "MAOQIU_PLAYER_ENC_V1";
     private static final String MQP_FORMAT = "MaoqiuPlayerMediaPackage";
     private static final String MQP_DEFAULT_PHRASE = "MaoqiuPlayer local media package v1";
-    private static final String APP_VERSION = "0.1.10";
+    private static final byte[] ENCRYPTOR_LITE_MAGIC = new byte[]{'M', 'A', 'O', 'L', 'I', 'T', 'E', '1', 0};
+    private static final byte[] ENCRYPTOR_SECURE_MAGIC = new byte[]{'M', 'A', 'O', 'Q', 'I', 'U', '1', 0};
+    private static final String ENCRYPTOR_LITE_FORMAT = "MAOQIU_LITE";
+    private static final String ENCRYPTOR_LITE_PAYLOAD_FILE = "file";
+    private static final String ENCRYPTOR_LITE_PAYLOAD_BUNDLE = "tar_bundle";
+    private static final String ENCRYPTOR_FILE_CIPHER_AES_GCM = "AES-256-GCM";
+    private static final String ENCRYPTOR_LITE_KEY_PHRASE = "Maoqiu Secure Lite v1 built-in application key";
+    private static final String APP_VERSION = "0.1.17";
     private static final String KEY_THEME = "theme";
     private static final String THEME_DARK = "dark";
     private static final String THEME_LIGHT = "light";
@@ -828,7 +836,11 @@ public class MainActivity extends Activity {
                 });
             } catch (Exception exc) {
                 runOnUiThread(() -> {
-                    Toast.makeText(this, "无法打开该媒体包，请检查文件完整性", Toast.LENGTH_LONG).show();
+                    String message = exc.getMessage();
+                    if (message == null || message.trim().isEmpty()) {
+                        message = "无法打开该媒体包，请检查文件完整性";
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                     showPackageDetails(item);
                 });
             }
@@ -1024,7 +1036,11 @@ public class MainActivity extends Activity {
         if (mime == null) {
             mime = guessMimeType(name);
         }
-        return new MediaItem(uri.toString(), name, mime == null ? "" : mime, classifyKind(name, mime), "已导入", System.currentTimeMillis());
+        String kind = classifyKind(name, mime);
+        if (!KIND_PACKAGE.equals(kind) && isPackageUri(uri)) {
+            kind = KIND_PACKAGE;
+        }
+        return new MediaItem(uri.toString(), name, mime == null ? "" : mime, kind, "已导入", System.currentTimeMillis());
     }
 
     private String queryDisplayName(Uri uri) {
@@ -1093,16 +1109,52 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean isPackageUri(Uri uri) {
+        int maxMagic = Math.max(MQP_MAGIC.getBytes(StandardCharsets.UTF_8).length, Math.max(ENCRYPTOR_LITE_MAGIC.length, ENCRYPTOR_SECURE_MAGIC.length));
+        byte[] prefix = new byte[maxMagic];
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) {
+                return false;
+            }
+            int total = 0;
+            while (total < prefix.length) {
+                int read = input.read(prefix, total, prefix.length - total);
+                if (read == -1) {
+                    break;
+                }
+                total += read;
+            }
+            if (total <= 0) {
+                return false;
+            }
+            byte[] actual = new byte[total];
+            System.arraycopy(prefix, 0, actual, 0, total);
+            return startsWith(actual, MQP_MAGIC.getBytes(StandardCharsets.UTF_8))
+                    || startsWith(actual, ENCRYPTOR_LITE_MAGIC)
+                    || startsWith(actual, ENCRYPTOR_SECURE_MAGIC);
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
     private ArrayList<MediaItem> extractPackage(Uri uri, String displayName) throws IOException, JSONException, GeneralSecurityException, NoSuchAlgorithmException {
         byte[] data = readAll(uri);
         byte[] magic = MQP_MAGIC.getBytes(StandardCharsets.UTF_8);
+        if (startsWith(data, magic)) {
+            return extractPlayerPackage(data, displayName, magic);
+        }
+        if (startsWith(data, ENCRYPTOR_LITE_MAGIC)) {
+            return extractLitePackage(data, displayName);
+        }
+        if (startsWith(data, ENCRYPTOR_SECURE_MAGIC)) {
+            throw new IOException("该加密文件需要用户名和密码，请使用桌面版打开。");
+        }
+        throw new IOException("Invalid package magic");
+    }
+
+    private ArrayList<MediaItem> extractPlayerPackage(byte[] data, String displayName, byte[] magic) throws IOException, JSONException, GeneralSecurityException, NoSuchAlgorithmException {
         if (data.length < magic.length + 4) {
             throw new IOException("Invalid package");
-        }
-        for (int i = 0; i < magic.length; i++) {
-            if (data[i] != magic[i]) {
-                throw new IOException("Invalid package magic");
-            }
         }
         int headerLength = ByteBuffer.wrap(data, magic.length, 4).getInt();
         int payloadOffset = magic.length + 4 + headerLength;
@@ -1131,6 +1183,55 @@ public class MainActivity extends Activity {
         return unzipPackage(zipBytes, target);
     }
 
+    private ArrayList<MediaItem> extractLitePackage(byte[] data, String displayName) throws IOException, JSONException, GeneralSecurityException, NoSuchAlgorithmException {
+        if (data.length < ENCRYPTOR_LITE_MAGIC.length + 4) {
+            throw new IOException("Invalid lite package");
+        }
+        int headerLength = ByteBuffer.wrap(data, ENCRYPTOR_LITE_MAGIC.length, 4).getInt();
+        int payloadOffset = ENCRYPTOR_LITE_MAGIC.length + 4 + headerLength;
+        if (payloadOffset > data.length) {
+            throw new IOException("Invalid lite package header");
+        }
+        String headerJson = new String(data, ENCRYPTOR_LITE_MAGIC.length + 4, headerLength, StandardCharsets.UTF_8);
+        JSONObject header = new JSONObject(headerJson);
+        if (!ENCRYPTOR_LITE_FORMAT.equals(header.optString("format")) || header.optInt("version") != 1) {
+            throw new IOException("Unsupported lite package");
+        }
+        byte[] encryptedPayload = new byte[data.length - payloadOffset];
+        System.arraycopy(data, payloadOffset, encryptedPayload, 0, encryptedPayload.length);
+
+        String cipherName = header.optString("cipher", ENCRYPTOR_FILE_CIPHER_AES_GCM);
+        if (!ENCRYPTOR_FILE_CIPHER_AES_GCM.equals(cipherName)) {
+            throw new IOException("Unsupported lite package cipher");
+        }
+        byte[] nonce = Base64.decode(header.getString("payload_nonce"), Base64.DEFAULT);
+        byte[] plain = decryptAesGcmNoAad(encryptedPayload, liteAppKey(), nonce);
+        String expectedSha = header.optString("original_sha256", "");
+        if (!expectedSha.isEmpty() && !expectedSha.equals(sha256(plain))) {
+            throw new IOException("Lite package checksum failed");
+        }
+
+        File target = new File(getCacheDir(), "media-packages/" + sanitize(displayName));
+        clearDirectory(target);
+        target.mkdirs();
+        String payloadType = header.optString("payload_type", ENCRYPTOR_LITE_PAYLOAD_FILE);
+        if (ENCRYPTOR_LITE_PAYLOAD_BUNDLE.equals(payloadType)) {
+            return untarPackage(plain, target);
+        }
+
+        ArrayList<MediaItem> items = new ArrayList<>();
+        String fileName = sanitize(header.optString("original_filename", displayName));
+        File out = new File(target, fileName);
+        try (FileOutputStream file = new FileOutputStream(out)) {
+            file.write(plain);
+        }
+        String kind = classifyKind(out.getName(), guessMimeType(out.getName()));
+        if (KIND_VIDEO.equals(kind) || KIND_IMAGE.equals(kind)) {
+            items.add(new MediaItem(Uri.fromFile(out).toString(), out.getName(), guessMimeType(out.getName()), kind, "媒体包", System.currentTimeMillis()));
+        }
+        return items;
+    }
+
     private byte[] readAll(Uri uri) throws IOException {
         try (InputStream input = getContentResolver().openInputStream(uri);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -1153,6 +1254,16 @@ public class MainActivity extends Activity {
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce));
         cipher.updateAAD(MQP_MAGIC.getBytes(StandardCharsets.UTF_8));
         return cipher.doFinal(payload);
+    }
+
+    private byte[] decryptAesGcmNoAad(byte[] payload, byte[] key, byte[] nonce) throws GeneralSecurityException {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce));
+        return cipher.doFinal(payload);
+    }
+
+    private byte[] liteAppKey() throws NoSuchAlgorithmException {
+        return MessageDigest.getInstance("SHA-256").digest(ENCRYPTOR_LITE_KEY_PHRASE.getBytes(StandardCharsets.UTF_8));
     }
 
     private ArrayList<MediaItem> unzipPackage(byte[] zipBytes, File targetDir) throws IOException {
@@ -1178,6 +1289,82 @@ public class MainActivity extends Activity {
             }
         }
         return items;
+    }
+
+    private ArrayList<MediaItem> untarPackage(byte[] tarBytes, File targetDir) throws IOException {
+        ArrayList<MediaItem> items = new ArrayList<>();
+        int offset = 0;
+        while (offset + 512 <= tarBytes.length) {
+            if (isZeroTarBlock(tarBytes, offset)) {
+                break;
+            }
+            String entryName = readTarString(tarBytes, offset, 100);
+            long size = parseTarSize(tarBytes, offset + 124);
+            byte type = tarBytes[offset + 156];
+            offset += 512;
+            if (size < 0 || offset + size > tarBytes.length) {
+                throw new IOException("Invalid tar entry");
+            }
+            if ((type == 0 || type == '0') && size > 0) {
+                String safeName = safeArchiveName(entryName);
+                if (!safeName.isEmpty()) {
+                    File out = new File(targetDir, safeName);
+                    try (FileOutputStream file = new FileOutputStream(out)) {
+                        file.write(tarBytes, offset, (int) size);
+                    }
+                    String kind = classifyKind(out.getName(), guessMimeType(out.getName()));
+                    if (KIND_VIDEO.equals(kind) || KIND_IMAGE.equals(kind)) {
+                        items.add(new MediaItem(Uri.fromFile(out).toString(), out.getName(), guessMimeType(out.getName()), kind, "媒体包", System.currentTimeMillis()));
+                    }
+                }
+            }
+            offset += (int) (((size + 511) / 512) * 512);
+        }
+        return items;
+    }
+
+    private boolean isZeroTarBlock(byte[] data, int offset) {
+        for (int i = offset; i < offset + 512 && i < data.length; i++) {
+            if (data[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String readTarString(byte[] data, int offset, int length) {
+        int end = offset;
+        int limit = Math.min(offset + length, data.length);
+        while (end < limit && data[end] != 0) {
+            end++;
+        }
+        return new String(data, offset, end - offset, StandardCharsets.UTF_8);
+    }
+
+    private long parseTarSize(byte[] data, int offset) {
+        long size = 0;
+        int limit = Math.min(offset + 12, data.length);
+        for (int i = offset; i < limit; i++) {
+            byte value = data[i];
+            if (value == 0 || value == ' ') {
+                continue;
+            }
+            if (value < '0' || value > '7') {
+                break;
+            }
+            size = (size * 8) + (value - '0');
+        }
+        return size;
+    }
+
+    private String safeArchiveName(String value) {
+        String normalized = value.replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        String name = slash >= 0 ? normalized.substring(slash + 1) : normalized;
+        if (name.equals(".") || name.equals("..")) {
+            return "";
+        }
+        return sanitize(name);
     }
 
     private void showPackageMediaDialog() {
@@ -1753,6 +1940,18 @@ public class MainActivity extends Activity {
 
     private String sanitize(String value) {
         return value.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    private boolean startsWith(byte[] data, byte[] prefix) {
+        if (data.length < prefix.length) {
+            return false;
+        }
+        for (int i = 0; i < prefix.length; i++) {
+            if (data[i] != prefix[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private String sha256(byte[] data) throws NoSuchAlgorithmException {

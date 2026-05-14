@@ -3,17 +3,23 @@ options:
   bundleIdPrefix: com.maoqiu
   deploymentTarget:
     iOS: "16.0"
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    from: 0.9.20
 targets:
   MaoqiuPlayer:
     type: application
     platform: iOS
     sources:
       - MaoqiuPlayer
+    dependencies:
+      - package: ZIPFoundation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.maoqiu.player
         INFOPLIST_FILE: MaoqiuPlayer/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.1.15"
-        CURRENT_PROJECT_VERSION: "5"
+        MARKETING_VERSION: "0.1.17"
+        CURRENT_PROJECT_VERSION: "17"
         TARGETED_DEVICE_FAMILY: "1"

@@ -155,7 +155,7 @@ struct ContentView: View {
         defer { url.stopAccessingSecurityScopedResource() }
         
         let name = url.lastPathComponent
-        let kind = classifyKind(fileName: name, mimeType: "")
+        let kind: MediaKind = MQPPackage.isSupportedPackage(fileURL: url) ? .mpackage : classifyKind(fileName: name, mimeType: "")
         
         if kind == .mpackage {
             // Handle .mqp
@@ -173,7 +173,7 @@ struct ContentView: View {
                         }
                     }
                 } catch {
-                    print("Failed to unpack: \(error)")
+                    print("Failed to unpack: \(error.localizedDescription)")
                 }
             }
         } else {
