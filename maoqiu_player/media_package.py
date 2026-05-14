@@ -339,10 +339,13 @@ def _extract_lite_package(path: str | Path, output_dir: str | Path) -> list[Path
     target_dir = Path(output_dir).expanduser()
     target_dir.mkdir(parents=True, exist_ok=True)
     if header.get("payload_type") == ENCRYPTOR_LITE_PAYLOAD_BUNDLE:
-        with tempfile.NamedTemporaryFile(prefix="maoqiu-lite-", suffix=".tar") as temp:
+        temp = tempfile.NamedTemporaryFile(prefix="maoqiu-lite-", suffix=".tar", delete=False)
+        try:
             temp.write(plain)
-            temp.flush()
+            temp.close()
             _safe_extract_tar(Path(temp.name), target_dir)
+        finally:
+            Path(temp.name).unlink(missing_ok=True)
         return _collect_playable_files(target_dir)
 
     filename = _safe_output_name(header.get("original_filename") or Path(path).stem)
@@ -383,10 +386,13 @@ def _extract_secure_package(path: str | Path, output_dir: str | Path, username: 
         raise MediaPackageError("加密文件校验失败，文件可能不完整。")
 
     if metadata.get("payload_type") == ENCRYPTOR_LITE_PAYLOAD_BUNDLE:
-        with tempfile.NamedTemporaryFile(prefix="maoqiu-secure-", suffix=".tar") as temp:
+        temp = tempfile.NamedTemporaryFile(prefix="maoqiu-secure-", suffix=".tar", delete=False)
+        try:
             temp.write(plain)
-            temp.flush()
+            temp.close()
             _safe_extract_tar(Path(temp.name), target_dir)
+        finally:
+            Path(temp.name).unlink(missing_ok=True)
         return _collect_playable_files(target_dir)
 
     filename = _safe_output_name(metadata.get("original_filename") or package_path.stem)
