@@ -22,9 +22,9 @@ def test_select_platform_asset() -> None:
 
 def test_parse_update_info_uses_matching_asset() -> None:
     release = {
-        "tag_name": "v0.1.18",
-        "name": "MaoqiuPlayer v0.1.18",
-        "html_url": "https://github.com/quiwe/maoqiu-player/releases/tag/v0.1.18",
+        "tag_name": "v0.2.0",
+        "name": "MaoqiuPlayer v0.2.0",
+        "html_url": "https://github.com/quiwe/maoqiu-player/releases/tag/v0.2.0",
         "body": "- update",
         "assets": [
             {"name": "MaoqiuPlayer-Windows-Setup.exe", "browser_download_url": "https://example.test/win", "size": 123},
@@ -34,6 +34,6 @@ def test_parse_update_info_uses_matching_asset() -> None:
     update = parse_update_info(release, system_name="Windows")
 
     assert update is not None
-    assert update.version == "0.1.18"
+    assert update.version == "0.2.0"
     assert update.asset is not None
     assert update.asset.name == "MaoqiuPlayer-Windows-Setup.exe"
