@@ -68,6 +68,8 @@ class MainWindow(QMainWindow):
         self.update_worker: UpdateCheckWorker | None = None
         self.download_worker: InstallerDownloadWorker | None = None
         self.download_progress: QProgressDialog | None = None
+        self.video_playlist: list[Path] = []
+        self.video_index = 0
 
         self.home_page = HomePage()
         self.library_page = LibraryPage(self.library)
@@ -107,7 +109,6 @@ class MainWindow(QMainWindow):
 
         nav_items = [
             ("home", "首页"),
-            ("recent", "最近播放"),
             ("video", "本地视频"),
             ("image", "本地图片"),
             ("playlist", "播放列表"),
@@ -164,8 +165,10 @@ class MainWindow(QMainWindow):
         self.home_page.open_media_requested.connect(self.open_media)
         self.library_page.open_media_requested.connect(self.open_media)
         self.library_page.library_changed.connect(self.refresh_home)
-        self.video_page.back_requested.connect(lambda: self.navigate("recent"))
-        self.image_page.back_requested.connect(lambda: self.navigate("recent"))
+        self.video_page.back_requested.connect(lambda: self.navigate("video"))
+        self.video_page.previous_requested.connect(lambda: self.open_video_neighbor(-1))
+        self.video_page.next_requested.connect(lambda: self.open_video_neighbor(1))
+        self.image_page.back_requested.connect(lambda: self.navigate("image"))
         self.settings_page.theme_changed.connect(lambda theme: apply_theme(self.app, theme))
         self.settings_page.advanced_tools_requested.connect(lambda: self.navigate("advanced"))
         self.advanced_tools_page.back_requested.connect(lambda: self.navigate("settings"))
@@ -176,7 +179,7 @@ class MainWindow(QMainWindow):
         self.video_page.stop()
         if target == "home":
             self.stack.setCurrentWidget(self.home_page)
-        elif target in {"recent", "video", "image"}:
+        elif target in {"video", "image"}:
             self.library_page.set_category(target)
             self.stack.setCurrentWidget(self.library_page)
         elif target == "playlist":
@@ -210,15 +213,14 @@ class MainWindow(QMainWindow):
 
         media_type = classify_media_type(media_path)
         if media_type == "video":
-            self.library.add_recent(media_path)
+            self.library.import_paths([media_path])
             self.library_page.refresh()
             self.refresh_home()
-            self.stack.setCurrentWidget(self.video_page)
-            self._set_checked_nav("")
-            self.video_page.open_video(media_path)
+            playlist = [item.path for item in self.library.filtered_items("video", "", "name")]
+            self.open_video_path(media_path, playlist)
             return
         if media_type == "image":
-            self.library.add_recent(media_path)
+            self.library.import_paths([media_path])
             self.library_page.refresh()
             self.refresh_home()
             playlist = [item.path for item in self.library.filtered_items("image", "", "name")]
@@ -228,6 +230,21 @@ class MainWindow(QMainWindow):
             return
         QMessageBox.information(self, "打开媒体", "暂不支持该文件格式。")
 
+    def open_video_path(self, media_path: Path, playlist: list[Path] | None = None) -> None:
+        self.video_playlist = list(playlist or [media_path])
+        if media_path not in self.video_playlist:
+            self.video_playlist.insert(0, media_path)
+        self.video_index = self.video_playlist.index(media_path)
+        self.stack.setCurrentWidget(self.video_page)
+        self._set_checked_nav("")
+        self.video_page.open_video(media_path)
+
+    def open_video_neighbor(self, offset: int) -> None:
+        if not self.video_playlist:
+            return
+        self.video_index = (self.video_index + offset) % len(self.video_playlist)
+        self.video_page.open_video(self.video_playlist[self.video_index])
+
     def search_library(self) -> None:
         self.library_page.search.setText(self.search.text())
         self.library_page.set_category("all")
@@ -235,7 +252,7 @@ class MainWindow(QMainWindow):
         self._set_checked_nav("")
 
     def refresh_home(self) -> None:
-        self.home_page.update_overview(self.library.stats(), self.library.recent_items(limit=5))
+        self.home_page.update_overview(self.library.stats())
 
     def check_for_updates(self) -> None:
         if self.update_worker is not None:
@@ -356,7 +373,14 @@ class MainWindow(QMainWindow):
         if first is None:
             QMessageBox.information(self, "打开媒体包", "媒体包中没有可播放的项目。")
             return
-        self.open_media(str(first.path))
+        if first.media_type == "video":
+            playlist = [item.path for item in imported if item.media_type == "video"]
+            self.open_video_path(first.path, playlist)
+            return
+        playlist = [item.path for item in imported if item.media_type == "image"]
+        self.stack.setCurrentWidget(self.image_page)
+        self._set_checked_nav("")
+        self.image_page.open_image(first.path, playlist)
 
     def _set_checked_nav(self, active: str) -> None:
         if active in {"advanced", "packages"}:

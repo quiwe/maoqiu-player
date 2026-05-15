@@ -2,9 +2,9 @@
 
 MaoqiuPlayer，中文名“毛球播放器”，是一款跨平台本地媒体播放器，支持常见视频、图片格式播放，并支持专用媒体包格式 `.mqp`。
 
-软件界面以普通本地播放器为主：左侧导航、顶部搜索、媒体库、最近播放、本地视频、本地图片、播放列表和设置。高级媒体包能力放在设置中的高级工具里，不作为首页主功能展示。
+软件界面以普通本地播放器为主：左侧导航、顶部搜索、媒体库、本地视频、本地图片、播放列表和设置。高级媒体包能力放在设置中的高级工具里，不作为首页主功能展示。
 
-版本：0.1.18
+版本：0.2.0
 GitHub 仓库名：`maoqiu-player`
 
 ## 主要功能
@@ -12,10 +12,9 @@ GitHub 仓库名：`maoqiu-player`
 - 本地视频播放：播放、暂停、进度、音量、全屏和倍速预留。
 - 图片查看：缩放、适应窗口、上一张、下一张和旋转预留。
 - 媒体库：导入本地视频和图片，支持搜索、分类和排序。
-- 最近播放：记录本机最近打开的媒体。
 - 播放列表：为后续多列表管理预留页面结构。
 - 浅色/深色主题：默认深色主题，设置中可切换浅色主题。
-- Android APK：支持应用内视频播放、图片缩放查看、本机媒体扫描、媒体库、最近播放和 `.mqp` 媒体包打开。
+- Android APK：支持应用内视频播放、图片缩放查看、本机媒体扫描、媒体库和 `.mqp` 媒体包打开。
 - 桌面版启动时会自动检查 GitHub Release 更新，发现新版本后可下载当前平台安装包并显示下载进度。
 
 ## 高级功能
@@ -64,7 +63,6 @@ python main.py
 左侧导航栏：
 
 - 首页
-- 最近播放
 - 本地视频
 - 本地图片
 - 播放列表
@@ -112,15 +110,15 @@ pytest
 
 - `MaoqiuPlayer-macOS.dmg`，打开后双击 `MaoqiuPlayer-macOS.pkg` 安装到 `/Applications`
 - `MaoqiuPlayer-Windows-Setup.exe`
-- `maoqiu-player_0.1.18_amd64.deb`
+- `maoqiu-player_0.2.0_amd64.deb`
 - `MaoqiuPlayer-Android.apk`
 - `MaoqiuPlayer-iOS.ipa`
 
 示例：
 
 ```bash
-git tag v0.1.18
-git push origin v0.1.18
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 也可以在 GitHub Actions 页面手动触发 `workflow_dispatch` 重新打包，手动触发只上传 artifacts，不创建 Release。

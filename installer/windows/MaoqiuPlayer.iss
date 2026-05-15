@@ -1,6 +1,6 @@
 #define MyAppName "MaoqiuPlayer"
 #define MyAppPublisher "Maoqiu"
-#define MyAppVersion "0.1.17"
+#define MyAppVersion "0.2.0"
 #define MyAppExeName "MaoqiuPlayer.exe"
 
 [Setup]

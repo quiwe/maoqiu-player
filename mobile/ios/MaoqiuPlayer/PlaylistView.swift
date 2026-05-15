@@ -4,6 +4,8 @@ struct PlaylistView: View {
     @EnvironmentObject var store: MediaStore
     @Binding var path: NavigationPath
     @State private var videoItem: MediaItem?
+    @State private var videoPlaylist: [MediaItem] = []
+    @State private var videoInitialIndex = 0
     @State private var imageSet: ImageSet?
     
     var body: some View {
@@ -26,24 +28,32 @@ struct PlaylistView: View {
                     }
                 }
                 .padding(18)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationBarHidden(true)
         .fullScreenCover(item: $videoItem) { item in
-            VideoPlayerView(item: item, playlist: store.library.filter { $0.kind == .video }, initialIndex: 0)
+            VideoPlayerView(item: item, playlist: videoPlaylist.isEmpty ? [item] : videoPlaylist, initialIndex: videoInitialIndex)
                 .environmentObject(store)
         }
         .fullScreenCover(item: $imageSet) { set in
-            ImageViewerView(items: set.items, initialIndex: 0)
+            ImageViewerView(items: set.items, initialIndex: set.initialIndex)
                 .environmentObject(store)
         }
     }
     
     private func openItem(_ item: MediaItem) {
-        store.addToRecent(item)
         switch item.kind {
-        case .video: videoItem = item
-        case .image: imageSet = ImageSet(items: [item])
+        case .video:
+            let videos = store.library.filter { $0.kind == .video }
+            videoPlaylist = videos.isEmpty ? [item] : videos
+            videoInitialIndex = videoPlaylist.firstIndex(of: item) ?? 0
+            videoItem = item
+        case .image:
+            let images = store.library.filter { $0.kind == .image }
+            let idx = images.firstIndex(of: item) ?? 0
+            imageSet = ImageSet(items: images.isEmpty ? [item] : images, initialIndex: idx)
         case .mpackage: path.append(NavDestination.packageDetail(item))
         default: break
         }

@@ -27,6 +27,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.util.Base64;
@@ -95,7 +96,6 @@ public class MainActivity extends Activity {
 
     private static final String PREFS_NAME = "maoqiu_player_android";
     private static final String KEY_LIBRARY = "library";
-    private static final String KEY_RECENT = "recent";
 
     private static final String KIND_VIDEO = "video";
     private static final String KIND_IMAGE = "image";
@@ -112,13 +112,13 @@ public class MainActivity extends Activity {
     private static final String ENCRYPTOR_LITE_PAYLOAD_BUNDLE = "tar_bundle";
     private static final String ENCRYPTOR_FILE_CIPHER_AES_GCM = "AES-256-GCM";
     private static final String ENCRYPTOR_LITE_KEY_PHRASE = "Maoqiu Secure Lite v1 built-in application key";
-    private static final String APP_VERSION = "0.1.18";
+    private static final String APP_VERSION = "0.2.0";
     private static final String KEY_THEME = "theme";
     private static final String THEME_DARK = "dark";
     private static final String THEME_LIGHT = "light";
+    private static final int MAX_CONTENT_WIDTH_DP = 560;
 
     private final ArrayList<MediaItem> library = new ArrayList<>();
-    private final ArrayList<MediaItem> recent = new ArrayList<>();
     private ArrayList<MediaItem> activePlaylist = new ArrayList<>();
     private int activeIndex = -1;
     private String currentScreen = "home";
@@ -130,6 +130,7 @@ public class MainActivity extends Activity {
     private ArrayList<MediaItem> pendingPackageItems;
     private AlertDialog activePackageDialog;
     private EditText activePathInput;
+    private Uri activeOutputTreeUri;
     private boolean fullscreen = false;
     private SharedPreferences prefs;
 
@@ -139,7 +140,6 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         configureWindow();
         library.addAll(loadItems(KEY_LIBRARY));
-        recent.addAll(loadItems(KEY_RECENT));
         if (!handleIncomingIntent(getIntent())) {
             showHome();
         }
@@ -149,7 +149,6 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         saveItems(KEY_LIBRARY, library);
-        saveItems(KEY_RECENT, recent);
     }
 
     @Override
@@ -242,18 +241,18 @@ public class MainActivity extends Activity {
         // 功能入口 - 2列网格
         page.addView(section("主要功能"));
         String[][] gridItems = {
-            {"🕐", "最近播放", recent.size() + " 个项目"},
             {"🎬", "本地视频", countKind(KIND_VIDEO) + " 个视频"},
             {"🖼️", "本地图片", countKind(KIND_IMAGE) + " 张图片"},
             {"📋", "播放列表", library.size() + " 个已导入"},
+            {"📦", "媒体包", countKind(KIND_PACKAGE) + " 个媒体包"},
             {"📂", "打开媒体", "视频、图片或 .mqp"},
             {"⚙️", "设置", "播放、缓存和关于"}
         };
         View.OnClickListener[] gridListeners = {
-            v -> showRecent(),
             v -> showLibrary(KIND_VIDEO),
             v -> showLibrary(KIND_IMAGE),
             v -> showPlaylist(),
+            v -> showLibrary(KIND_PACKAGE),
             v -> openMediaPicker(REQ_OPEN_MEDIA, false),
             v -> showSettings()
         };
@@ -274,37 +273,6 @@ public class MainActivity extends Activity {
             page.addView(gridRow);
         }
 
-        // 最近播放 - 横滑卡片
-        if (!recent.isEmpty()) {
-            page.addView(section("继续播放"));
-            HorizontalScrollView hScroll = new HorizontalScrollView(this);
-            hScroll.setHorizontalScrollBarEnabled(false);
-            hScroll.setLayoutParams(matchWithTop(dp(4)));
-            LinearLayout hList = new LinearLayout(this);
-            hList.setOrientation(LinearLayout.HORIZONTAL);
-            hList.setPadding(0, 0, dp(18), 0);
-            for (int i = 0; i < Math.min(8, recent.size()); i++) {
-                MediaItem item = recent.get(i);
-                hList.addView(recentCard(item, recent, i));
-            }
-            hScroll.addView(hList);
-            page.addView(hScroll);
-        }
-
-        setScrollableContent(page);
-    }
-
-    private void showRecent() {
-        currentScreen = "recent";
-        LinearLayout page = page();
-        page.addView(header("最近播放", v -> showHome()));
-        if (recent.isEmpty()) {
-            page.addView(empty("还没有播放记录"));
-        } else {
-            for (int i = 0; i < recent.size(); i++) {
-                page.addView(mediaRow(recent.get(i), recent, i));
-            }
-        }
         setScrollableContent(page);
     }
 
@@ -465,34 +433,6 @@ public class MainActivity extends Activity {
         page.addView(section("关于"));
         page.addView(card("关于毛球播放器", "MaoqiuPlayer " + APP_VERSION, null));
 
-        // 清空最近播放
-        LinearLayout clearCard = new LinearLayout(this);
-        clearCard.setOrientation(LinearLayout.HORIZONTAL);
-        clearCard.setGravity(Gravity.CENTER_VERTICAL);
-        clearCard.setPadding(dp(16), dp(14), dp(16), dp(14));
-        clearCard.setBackground(rounded(surfaceColor(), dp(10), surfaceStroke()));
-        clearCard.setLayoutParams(matchWithTop(dp(10)));
-        LinearLayout clearText = new LinearLayout(this);
-        clearText.setOrientation(LinearLayout.VERTICAL);
-        clearText.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        clearText.addView(text("清空最近播放", 17, true));
-        TextView clearSub = text("删除所有播放记录", 13, false);
-        clearSub.setTextColor(subtextColor());
-        clearText.addView(clearSub);
-        clearCard.addView(clearText);
-        Switch clearSwitch = new Switch(this);
-        clearSwitch.setChecked(false);
-        clearSwitch.setOnCheckedChangeListener((btn, checked) -> {
-            if (checked) {
-                recent.clear();
-                saveItems(KEY_RECENT, recent);
-                Toast.makeText(this, "最近播放已清空", Toast.LENGTH_SHORT).show();
-                btn.setChecked(false);
-            }
-        });
-        clearCard.addView(clearSwitch);
-        page.addView(clearCard);
-
         setScrollableContent(page);
     }
 
@@ -555,10 +495,14 @@ public class MainActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(0xff000000);
 
-        VideoView video = new VideoView(this);
+        FitVideoView video = new FitVideoView(this);
         Uri videoUri = resolvePlayableUri(Uri.parse(item.uri));
         video.setVideoURI(videoUri);
-        root.addView(video, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        FrameLayout.LayoutParams videoLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER);
+        root.addView(video, videoLp);
 
         // --- Top overlay: back + title + speed ---
         int statusBarHeight = getStatusBarHeight();
@@ -775,6 +719,7 @@ public class MainActivity extends Activity {
 
         video.setOnPreparedListener(mp -> {
             currentMediaPlayer = mp;
+            video.setVideoSize(mp.getVideoWidth(), mp.getVideoHeight());
             applyPlaybackSpeed();
             int dur = mp.getDuration();
             seekBar.setMax(dur);
@@ -983,7 +928,6 @@ public class MainActivity extends Activity {
             activePlaylist.add(item);
             activeIndex = 0;
         }
-        addRecent(item);
         if (KIND_VIDEO.equals(item.kind)) {
             showVideoPlayer(item);
         } else if (KIND_IMAGE.equals(item.kind)) {
@@ -1035,6 +979,10 @@ public class MainActivity extends Activity {
         if (resultCode != RESULT_OK || data == null) {
             return;
         }
+        if (requestCode == REQ_PICK_FOLDER) {
+            handlePickedOutputFolder(data);
+            return;
+        }
         ArrayList<MediaItem> picked = new ArrayList<>();
         ClipData clipData = data.getClipData();
         if (clipData != null) {
@@ -1063,12 +1011,6 @@ public class MainActivity extends Activity {
             } else {
                 Toast.makeText(this, "未选择任何文件", Toast.LENGTH_SHORT).show();
             }
-        } else if (requestCode == REQ_PICK_FOLDER) {
-            Uri treeUri = data.getData();
-            if (treeUri != null && activePathInput != null) {
-                String folderPath = extractRelativePathFromTreeUri(treeUri);
-                activePathInput.setText(folderPath);
-            }
         }
     }
 
@@ -1081,6 +1023,31 @@ public class MainActivity extends Activity {
             getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (SecurityException ignored) {
             // Some providers grant transient read access only.
+        }
+    }
+
+    private void persistTreePermission(Intent data, Uri uri) {
+        int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        if (flags == 0) {
+            return;
+        }
+        try {
+            getContentResolver().takePersistableUriPermission(uri, flags);
+        } catch (SecurityException ignored) {
+            // Some providers grant transient tree access only.
+        }
+    }
+
+    private void handlePickedOutputFolder(Intent data) {
+        Uri treeUri = data.getData();
+        if (treeUri == null) {
+            Toast.makeText(this, "未选择保存文件夹", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        activeOutputTreeUri = treeUri;
+        persistTreePermission(data, treeUri);
+        if (activePathInput != null) {
+            activePathInput.setText(describeTreeUri(treeUri));
         }
     }
 
@@ -1162,7 +1129,11 @@ public class MainActivity extends Activity {
 
     private MediaItem mediaItemFromUri(Uri uri) {
         String name = queryDisplayName(uri);
-        String mime = getContentResolver().getType(uri);
+        String mime = null;
+        try {
+            mime = getContentResolver().getType(uri);
+        } catch (Exception ignored) {
+        }
         if (mime == null) {
             mime = guessMimeType(name);
         }
@@ -1262,7 +1233,7 @@ public class MainActivity extends Activity {
             return startsWith(actual, MQP_MAGIC.getBytes(StandardCharsets.UTF_8))
                     || startsWith(actual, ENCRYPTOR_LITE_MAGIC)
                     || startsWith(actual, ENCRYPTOR_SECURE_MAGIC);
-        } catch (IOException ignored) {
+        } catch (Exception ignored) {
             return false;
         }
     }
@@ -1507,6 +1478,7 @@ public class MainActivity extends Activity {
 
     private void showPackageOptionsDialog(ArrayList<MediaItem> items) {
         pendingPackageItems = items;
+        activeOutputTreeUri = null;
 
         LinearLayout optionsLayout = new LinearLayout(this);
         optionsLayout.setOrientation(LinearLayout.VERTICAL);
@@ -1550,6 +1522,10 @@ public class MainActivity extends Activity {
         pickFolderBtn.setPadding(dp(12), 0, dp(12), 0);
         pickFolderBtn.setOnClickListener(v -> {
             Intent treeIntent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            treeIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
             startActivityForResult(treeIntent, REQ_PICK_FOLDER);
         });
         pathRow.addView(activePathInput);
@@ -1577,34 +1553,44 @@ public class MainActivity extends Activity {
                     String customName = nameInput.getText().toString().trim();
                     String customPath = activePathInput.getText().toString().trim();
                     String customSuffix = suffixInput.getText().toString().trim();
+                    Uri outputTreeUri = activeOutputTreeUri;
                     if (customSuffix.isEmpty()) customSuffix = ".mqp";
                     if (!customSuffix.startsWith(".")) customSuffix = "." + customSuffix;
-                    startPackaging(pendingPackageItems, customName, customPath, customSuffix);
+                    startPackaging(pendingPackageItems, customName, customPath, customSuffix, outputTreeUri);
                     pendingPackageItems = null;
+                    activeOutputTreeUri = null;
                 })
                 .setNegativeButton("取消", (dialog, which) -> {
                     pendingPackageItems = null;
+                    activeOutputTreeUri = null;
                 })
                 .create();
         activePackageDialog.show();
     }
 
-    private String extractRelativePathFromTreeUri(Uri treeUri) {
-        String docId = android.provider.DocumentsContract.getTreeDocumentId(treeUri);
-        if (docId != null && docId.startsWith("primary:")) {
-            return docId.substring("primary:".length());
+    private String describeTreeUri(Uri treeUri) {
+        try {
+            String docId = DocumentsContract.getTreeDocumentId(treeUri);
+            if (docId != null && docId.startsWith("primary:")) {
+                String path = docId.substring("primary:".length());
+                return path.isEmpty() ? Environment.DIRECTORY_DOWNLOADS : path;
+            }
+            if (docId != null && !docId.isEmpty()) {
+                return docId;
+            }
+        } catch (Exception ignored) {
         }
-        return docId != null ? docId : "";
+        return treeUri.toString();
     }
 
-    private void startPackaging(ArrayList<MediaItem> items, String customName, String customPath, String customSuffix) {
+    private void startPackaging(ArrayList<MediaItem> items, String customName, String customPath, String customSuffix, Uri outputTreeUri) {
         ProgressDialog progressDialog = new ProgressDialog(this);
         progressDialog.setMessage("正在打包 " + items.size() + " 个媒体...");
         progressDialog.setCancelable(false);
         progressDialog.show();
         new Thread(() -> {
             try {
-                String fileName = buildMediaPackage(items, customName, customPath, customSuffix);
+                String fileName = buildMediaPackage(items, customName, customPath, customSuffix, outputTreeUri);
                 runOnUiThread(() -> {
                     progressDialog.dismiss();
                     Toast.makeText(this, "打包完成: " + fileName, Toast.LENGTH_LONG).show();
@@ -1618,7 +1604,7 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private String buildMediaPackage(ArrayList<MediaItem> items, String customName, String customPath, String customSuffix) throws Exception {
+    private String buildMediaPackage(ArrayList<MediaItem> items, String customName, String customPath, String customSuffix, Uri outputTreeUri) throws Exception {
         ByteArrayOutputStream zipBuffer = new ByteArrayOutputStream();
         JSONArray itemsJson = new JSONArray();
         Set<String> usedNames = new HashSet<>();
@@ -1676,6 +1662,16 @@ public class MainActivity extends Activity {
         byte[] headerBytes = header.toString().getBytes(StandardCharsets.UTF_8);
         byte[] magicBytes = MQP_MAGIC.getBytes(StandardCharsets.UTF_8);
         String fileName = baseName + customSuffix;
+        if (outputTreeUri != null) {
+            Uri parentUri = DocumentsContract.buildDocumentUriUsingTree(outputTreeUri, DocumentsContract.getTreeDocumentId(outputTreeUri));
+            Uri outputUri = DocumentsContract.createDocument(getContentResolver(), parentUri, "application/octet-stream", fileName);
+            if (outputUri == null) throw new IOException("无法在所选文件夹创建文件");
+            try (OutputStream os = getContentResolver().openOutputStream(outputUri)) {
+                if (os == null) throw new IOException("无法写入文件");
+                writePackageBytes(os, magicBytes, headerBytes, encryptedPayload);
+            }
+            return fileName;
+        }
         String relativePath = customPath.isEmpty() ? Environment.DIRECTORY_DOWNLOADS : Environment.DIRECTORY_DOWNLOADS + "/" + customPath;
         if (Build.VERSION.SDK_INT >= 29) {
             ContentValues values = new ContentValues();
@@ -1686,23 +1682,24 @@ public class MainActivity extends Activity {
             if (uri == null) throw new IOException("无法创建文件");
             try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                 if (os == null) throw new IOException("无法写入文件");
-                os.write(magicBytes);
-                os.write(ByteBuffer.allocate(4).putInt(headerBytes.length).array());
-                os.write(headerBytes);
-                os.write(encryptedPayload);
+                writePackageBytes(os, magicBytes, headerBytes, encryptedPayload);
             }
         } else {
             File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), customPath);
             if (!customPath.isEmpty() && !dir.exists()) dir.mkdirs();
             File outputFile = new File(dir, fileName);
             try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                fos.write(magicBytes);
-                fos.write(ByteBuffer.allocate(4).putInt(headerBytes.length).array());
-                fos.write(headerBytes);
-                fos.write(encryptedPayload);
+                writePackageBytes(fos, magicBytes, headerBytes, encryptedPayload);
             }
         }
         return fileName;
+    }
+
+    private void writePackageBytes(OutputStream output, byte[] magicBytes, byte[] headerBytes, byte[] encryptedPayload) throws IOException {
+        output.write(magicBytes);
+        output.write(ByteBuffer.allocate(4).putInt(headerBytes.length).array());
+        output.write(headerBytes);
+        output.write(encryptedPayload);
     }
 
     private String uniqueArchiveName(String name, Set<String> usedNames, int index) {
@@ -1740,15 +1737,6 @@ public class MainActivity extends Activity {
         }
         Collections.sort(items, comparator);
         return items;
-    }
-
-    private void addRecent(MediaItem item) {
-        removeByUri(recent, item.uri);
-        recent.add(0, item.withTimestamp(System.currentTimeMillis()));
-        while (recent.size() > 50) {
-            recent.remove(recent.size() - 1);
-        }
-        saveItems(KEY_RECENT, recent);
     }
 
     private void upsert(ArrayList<MediaItem> items, MediaItem item) {
@@ -1853,7 +1841,23 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(bgColor());
-        scroll.addView(page);
+
+        FrameLayout container = new FrameLayout(this);
+        container.setBackgroundColor(bgColor());
+        container.setMinimumHeight(getResources().getDisplayMetrics().heightPixels);
+
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int maxWidth = dp(MAX_CONTENT_WIDTH_DP);
+        int contentWidth = screenWidth > maxWidth ? maxWidth : FrameLayout.LayoutParams.MATCH_PARENT;
+        FrameLayout.LayoutParams pageParams = new FrameLayout.LayoutParams(
+                contentWidth,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        container.addView(page, pageParams);
+
+        scroll.addView(container, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT));
         setContentView(scroll);
     }
 
@@ -2158,33 +2162,6 @@ public class MainActivity extends Activity {
         return chip;
     }
 
-    private View recentCard(MediaItem item, ArrayList<MediaItem> source, int index) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(12), dp(10), dp(12), dp(10));
-        card.setBackground(rounded(surfaceColor(), dp(10), surfaceStroke()));
-        card.setOnClickListener(v -> openItemFromList(source, index));
-        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(dp(140), LinearLayout.LayoutParams.WRAP_CONTENT);
-        cardLp.rightMargin = dp(10);
-        card.setLayoutParams(cardLp);
-
-        // 缩略图占位
-        TextView icon = new TextView(this);
-        icon.setText(KIND_VIDEO.equals(item.kind) ? "🎬" : "🖼️");
-        icon.setTextSize(28);
-        icon.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(80));
-        iconLp.bottomMargin = dp(8);
-        icon.setBackground(rounded(thumbnailBgColor(), dp(8), 0));
-        card.addView(icon, iconLp);
-
-        TextView name = text(item.name, 13, true);
-        name.setSingleLine(true);
-        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        card.addView(name);
-        return card;
-    }
-
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
@@ -2235,10 +2212,6 @@ public class MainActivity extends Activity {
             this.kind = kind == null ? KIND_UNKNOWN : kind;
             this.source = source == null ? "媒体库" : source;
             this.timestamp = timestamp;
-        }
-
-        MediaItem withTimestamp(long value) {
-            return new MediaItem(uri, name, mimeType, kind, source, value);
         }
 
         JSONObject toJson() {
@@ -2293,6 +2266,42 @@ public class MainActivity extends Activity {
         }
     }
 
+    private static class FitVideoView extends VideoView {
+        private int videoWidth = 0;
+        private int videoHeight = 0;
+
+        FitVideoView(Activity activity) {
+            super(activity);
+        }
+
+        void setVideoSize(int width, int height) {
+            if (width <= 0 || height <= 0) {
+                return;
+            }
+            videoWidth = width;
+            videoHeight = height;
+            requestLayout();
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int width = MeasureSpec.getSize(widthMeasureSpec);
+            int height = MeasureSpec.getSize(heightMeasureSpec);
+            if (videoWidth > 0 && videoHeight > 0 && width > 0 && height > 0) {
+                float videoAspect = (float) videoWidth / (float) videoHeight;
+                int measuredWidth = width;
+                int measuredHeight = Math.round(measuredWidth / videoAspect);
+                if (measuredHeight > height) {
+                    measuredHeight = height;
+                    measuredWidth = Math.round(measuredHeight * videoAspect);
+                }
+                setMeasuredDimension(measuredWidth, measuredHeight);
+                return;
+            }
+            setMeasuredDimension(width, height);
+        }
+    }
+
     private class ZoomImageView extends View {
         private final Matrix matrix = new Matrix();
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -2326,7 +2335,7 @@ public class MainActivity extends Activity {
                 return;
             }
             matrix.reset();
-            float scale = Math.min(1.0f, Math.min((float) getWidth() / bitmap.getWidth(), (float) getHeight() / bitmap.getHeight()));
+            float scale = Math.min((float) getWidth() / bitmap.getWidth(), (float) getHeight() / bitmap.getHeight());
             float dx = (getWidth() - bitmap.getWidth() * scale) / 2f;
             float dy = (getHeight() - bitmap.getHeight() * scale) / 2f;
             matrix.postScale(scale, scale);
@@ -2358,7 +2367,9 @@ public class MainActivity extends Activity {
             if (bitmap == null) {
                 paint.setColor(textColor());
                 paint.setTextSize(dp(16));
-                canvas.drawText("没有图片", dp(24), getHeight() / 2f, paint);
+                paint.setTextAlign(Paint.Align.CENTER);
+                canvas.drawText("没有图片", getWidth() / 2f, getHeight() / 2f, paint);
+                paint.setTextAlign(Paint.Align.LEFT);
                 return;
             }
             canvas.drawBitmap(bitmap, matrix, paint);

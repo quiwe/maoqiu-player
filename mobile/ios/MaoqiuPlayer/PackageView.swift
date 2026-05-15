@@ -8,6 +8,7 @@ struct PackageDetailView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var videoItem: MediaItem?
+    @State private var videoPlaylist: [MediaItem] = []
     @State private var imageSet: ImageSet?
     
     var body: some View {
@@ -45,15 +46,17 @@ struct PackageDetailView: View {
                     }
                 }
                 .padding(18)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationBarHidden(true)
         .fullScreenCover(item: $videoItem) { item in
-            VideoPlayerView(item: item, playlist: [item], initialIndex: 0)
+            VideoPlayerView(item: item, playlist: videoPlaylist.isEmpty ? [item] : videoPlaylist, initialIndex: 0)
                 .environmentObject(store)
         }
         .fullScreenCover(item: $imageSet) { set in
-            ImageViewerView(items: set.items, initialIndex: 0)
+            ImageViewerView(items: set.items, initialIndex: set.initialIndex)
                 .environmentObject(store)
         }
         .alert("打开失败", isPresented: $showError) {
@@ -83,11 +86,15 @@ struct PackageDetailView: View {
                         return
                     }
                     store.addAllToLibrary(extracted)
-                    if let first = extracted.first {
-                        store.addToRecent(first)
+                    let playable = extracted.filter { $0.kind == .video || $0.kind == .image }
+                    if let first = playable.first {
                         switch first.kind {
-                        case .video: videoItem = first
-                        case .image: imageSet = ImageSet(items: extracted)
+                        case .video:
+                            videoPlaylist = playable.filter { $0.kind == .video }
+                            videoItem = first
+                        case .image:
+                            let images = playable.filter { $0.kind == .image }
+                            imageSet = ImageSet(items: images.isEmpty ? [first] : images)
                         default: break
                         }
                     }
@@ -189,6 +196,8 @@ struct PackageOptionsView: View {
                     }
                 }
                 .padding(18)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationBarHidden(true)
@@ -220,7 +229,12 @@ struct PackageOptionsView: View {
                     (url: url, name: url.lastPathComponent)
                 }
                 
-                let outputURL = try MQPPackage.pack(items: items, packageName: baseName, suffix: suffix)
+                let outputURL = try MQPPackage.pack(
+                    items: items,
+                    packageName: baseName,
+                    suffix: suffix,
+                    outputFolder: customPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
                 
                 // Add to library
                 let item = MediaItem(

@@ -7,6 +7,12 @@ import UniformTypeIdentifiers
 struct ImageSet: Identifiable {
     let id = UUID()
     let items: [MediaItem]
+    let initialIndex: Int
+
+    init(items: [MediaItem], initialIndex: Int = 0) {
+        self.items = items
+        self.initialIndex = initialIndex
+    }
 }
 
 // MARK: - ContentView (首页)
@@ -55,49 +61,28 @@ struct ContentView: View {
                             GridItem(.flexible(), spacing: 8),
                             GridItem(.flexible(), spacing: 8)
                         ], spacing: 10) {
-                            GridCard(emoji: "🕐", title: "最近播放", subtitle: "\(store.recent.count) 个项目")
-                                .onTapGesture { path.append(NavDestination.recent) }
                             GridCard(emoji: "🎬", title: "本地视频", subtitle: "\(store.countKind(.video)) 个视频")
                                 .onTapGesture { path.append(NavDestination.library(.video, "")) }
                             GridCard(emoji: "🖼️", title: "本地图片", subtitle: "\(store.countKind(.image)) 张图片")
                                 .onTapGesture { path.append(NavDestination.library(.image, "")) }
                             GridCard(emoji: "📋", title: "播放列表", subtitle: "\(store.library.count) 个已导入")
                                 .onTapGesture { path.append(NavDestination.playlist) }
+                            GridCard(emoji: "📦", title: "媒体包", subtitle: "\(store.countKind(.mpackage)) 个媒体包")
+                                .onTapGesture { path.append(NavDestination.library(.mpackage, "")) }
                             GridCard(emoji: "📂", title: "打开媒体", subtitle: "视频、图片或 .mqp")
                                 .onTapGesture { showFileImporter = true }
                             GridCard(emoji: "⚙️", title: "设置", subtitle: "播放、缓存和关于")
                                 .onTapGesture { path.append(NavDestination.settings) }
                         }
-                        
-                        // 最近播放横滑
-                        if !store.recent.isEmpty {
-                            Text("继续播放")
-                                .font(.subheadline.bold())
-                                .foregroundColor(Color(hex: 0x9fa7b2))
-                                .padding(.top, 18)
-                                .padding(.bottom, 8)
-                            
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 10) {
-                                    ForEach(Array(store.recent.prefix(8).enumerated()), id: \.offset) { index, item in
-                                        RecentCard(item: item)
-                                            .onTapGesture {
-                                                openItem(item)
-                                            }
-                                    }
-                                }
-                                .padding(.trailing, 18)
-                            }
-                        }
                     }
                     .padding(18)
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
             .navigationBarHidden(true)
             .navigationDestination(for: NavDestination.self) { dest in
                 switch dest {
-                case .recent:
-                    RecentView(path: $path)
                 case .library(let filter, let query):
                     LibraryView(path: $path, initialFilter: filter, initialQuery: query)
                 case .playlist:
@@ -118,7 +103,7 @@ struct ContentView: View {
                     .environmentObject(store)
             }
             .fullScreenCover(item: $imageSet) { set in
-                ImageViewerView(items: set.items, initialIndex: 0)
+                ImageViewerView(items: set.items, initialIndex: set.initialIndex)
                     .environmentObject(store)
             }
             .fileImporter(
@@ -137,7 +122,6 @@ struct ContentView: View {
     @State private var imageSet: ImageSet?
     
     private func openItem(_ item: MediaItem) {
-        store.addToRecent(item)
         switch item.kind {
         case .video:
             videoItem = item
@@ -151,8 +135,10 @@ struct ContentView: View {
     }
     
     private func handleOpenedFile(_ url: URL) {
-        guard url.startAccessingSecurityScopedResource() else { return }
-        defer { url.stopAccessingSecurityScopedResource() }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+        }
         
         let name = url.lastPathComponent
         let kind: MediaKind = MQPPackage.isSupportedPackage(fileURL: url) ? .mpackage : classifyKind(fileName: name, mimeType: "")
@@ -160,13 +146,16 @@ struct ContentView: View {
         if kind == .mpackage {
             // Handle .mqp
             Task {
+                let taskAccessed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if taskAccessed { url.stopAccessingSecurityScopedResource() }
+                }
                 do {
                     let items = try MQPPackage.unpack(fileURL: url)
                     if !items.isEmpty {
                         store.addAllToLibrary(items)
                         await MainActor.run {
                             if let first = items.first {
-                                store.addToRecent(first)
                                 if first.kind == .video { videoItem = first }
                                 else if first.kind == .image { imageSet = ImageSet(items: items) }
                             }
@@ -192,7 +181,6 @@ struct ContentView: View {
 
 // MARK: - Navigation Destinations
 enum NavDestination: Hashable {
-    case recent
     case library(FilterMode, String)
     case playlist
     case settings
@@ -202,7 +190,6 @@ enum NavDestination: Hashable {
     
     static func == (lhs: NavDestination, rhs: NavDestination) -> Bool {
         switch (lhs, rhs) {
-        case (.recent, .recent): return true
         case (.library(let a, let b), .library(let c, let d)): return a == c && b == d
         case (.playlist, .playlist): return true
         case (.settings, .settings): return true
@@ -215,7 +202,6 @@ enum NavDestination: Hashable {
     
     func hash(into hasher: inout Hasher) {
         switch self {
-        case .recent: hasher.combine(0)
         case .library(let f, let q): hasher.combine(1); hasher.combine(f); hasher.combine(q)
         case .playlist: hasher.combine(2)
         case .settings: hasher.combine(3)

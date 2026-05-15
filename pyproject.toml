@@ -1,6 +1,6 @@
 [project]
 name = "maoqiu-player"
-version = "0.1.18"
+version = "0.2.0"
 description = "MaoqiuPlayer, a cross-platform local media player with private media package support."
 requires-python = ">=3.11"
 dependencies = [

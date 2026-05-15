@@ -17,6 +17,7 @@ struct VideoPlayerView: View {
     @State private var isSeeking = false
     @State private var hideTask: DispatchWorkItem?
     @State private var currentIndex: Int = 0
+    @State private var timeObserver: Any?
     
     var body: some View {
         ZStack {
@@ -61,6 +62,32 @@ struct VideoPlayerView: View {
                     
                     // Bottom overlay
                     HStack(spacing: 8) {
+                        Button {
+                            openNeighbor(-1)
+                        } label: {
+                            Image(systemName: "backward.fill")
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                        }
+                        .disabled(playlist.count < 2)
+
+                        Button {
+                            togglePlayback()
+                        } label: {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                        }
+
+                        Button {
+                            openNeighbor(1)
+                        } label: {
+                            Image(systemName: "forward.fill")
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                        }
+                        .disabled(playlist.count < 2)
+
                         Text(formatTime(currentTime))
                             .font(.caption)
                             .foregroundColor(.white)
@@ -91,6 +118,10 @@ struct VideoPlayerView: View {
             startHideTimer()
         }
         .onDisappear {
+            if let timeObserver {
+                player?.removeTimeObserver(timeObserver)
+                self.timeObserver = nil
+            }
             player?.pause()
             player = nil
         }
@@ -105,8 +136,14 @@ struct VideoPlayerView: View {
     private func loadVideo() {
         let current = currentItem
         guard let url = URL(string: current.uri) else { return }
+        if let timeObserver {
+            player?.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
         let avPlayer = AVPlayer(url: url)
         self.player = avPlayer
+        currentTime = 0
+        duration = 0
         
         // Observe duration
         Task {
@@ -122,7 +159,7 @@ struct VideoPlayerView: View {
         
         // Observe time
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
-        avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+        timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
             Task { @MainActor in
                 guard !isSeeking else { return }
                 currentTime = CMTimeGetSeconds(time)
@@ -139,14 +176,26 @@ struct VideoPlayerView: View {
         } else {
             showControls = true
             startHideTimer()
-            if isPlaying {
-                player?.pause()
-                isPlaying = false
-            } else {
-                player?.play()
-                isPlaying = true
-            }
         }
+    }
+
+    private func togglePlayback() {
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+        } else {
+            player?.play()
+            isPlaying = true
+            startHideTimer()
+        }
+    }
+
+    private func openNeighbor(_ offset: Int) {
+        guard !playlist.isEmpty else { return }
+        currentIndex = (currentIndex + offset + playlist.count) % playlist.count
+        player?.pause()
+        loadVideo()
+        startHideTimer()
     }
     
     private func startHideTimer() {

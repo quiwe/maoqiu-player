@@ -29,7 +29,6 @@ class LibraryPage(QWidget):
 
     CATEGORY_MAP = {
         "全部媒体": "all",
-        "最近播放": "recent",
         "视频": "video",
         "图片": "image",
     }
@@ -38,7 +37,6 @@ class LibraryPage(QWidget):
         "按修改时间": "modified",
         "按名称": "name",
         "按格式": "format",
-        "按最近播放": "recent",
     }
 
     def __init__(self, library: MediaLibrary) -> None:

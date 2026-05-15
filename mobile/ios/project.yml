@@ -20,6 +20,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.maoqiu.player
         INFOPLIST_FILE: MaoqiuPlayer/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.1.18"
-        CURRENT_PROJECT_VERSION: "18"
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "20"
         TARGETED_DEVICE_FAMILY: "1"

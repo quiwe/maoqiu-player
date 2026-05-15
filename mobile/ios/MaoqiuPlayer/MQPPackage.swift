@@ -146,13 +146,19 @@ enum MQPPackage {
     }
     
     // MARK: - Pack
-    static func pack(items: [(url: URL, name: String)], packageName: String, suffix: String = ".mqp") throws -> URL {
+    static func pack(items: [(url: URL, name: String)], packageName: String, suffix: String = ".mqp", outputFolder: String = "") throws -> URL {
         // Create zip data
         var zipEntries: [(name: String, data: Data)] = []
         var usedNames = Set<String>()
         var archiveNames: [String] = []
         
         for (index, item) in items.enumerated() {
+            let accessed = item.url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed {
+                    item.url.stopAccessingSecurityScopedResource()
+                }
+            }
             let data = try Data(contentsOf: item.url)
             let arcName = uniqueArchiveName(item.name, usedNames: &usedNames, index: index + 1)
             usedNames.insert(arcName)
@@ -210,9 +216,18 @@ enum MQPPackage {
         fileData.append(headerData)
         fileData.append(encryptedPayload)
         
-        // Save to Documents
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let outputURL = docs.appendingPathComponent(packageName + suffix)
+        // Save to Documents, optionally inside a user-entered relative folder.
+        var outputDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let folder = outputFolder.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !folder.isEmpty {
+            for component in folder.split(separator: "/").map(String.init) {
+                let safeComponent = sanitizeFileName(component)
+                guard !safeComponent.isEmpty, safeComponent != ".", safeComponent != ".." else { continue }
+                outputDir.appendPathComponent(safeComponent, isDirectory: true)
+            }
+            try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        }
+        let outputURL = outputDir.appendingPathComponent(packageName + suffix)
         try fileData.write(to: outputURL)
         
         return outputURL

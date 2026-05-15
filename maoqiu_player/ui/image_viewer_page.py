@@ -247,4 +247,4 @@ class ImageCanvas(QWidget):
             return 1.0
         available_width = max(1, self.viewport_size.width() - 20)
         available_height = max(1, self.viewport_size.height() - 20)
-        return min(1.0, available_width / image.width(), available_height / image.height())
+        return min(available_width / image.width(), available_height / image.height())

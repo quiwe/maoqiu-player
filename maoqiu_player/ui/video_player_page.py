@@ -19,6 +19,7 @@ class VideoPlayerPage(QWidget):
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.video = QVideoWidget()
+        self.video.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.video)
         self.audio.setVolume(0.7)

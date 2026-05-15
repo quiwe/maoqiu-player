@@ -4,10 +4,9 @@ struct SettingsView: View {
     @EnvironmentObject var store: MediaStore
     @Binding var path: NavigationPath
     @State private var showClearCacheAlert = false
-    @State private var showClearRecentAlert = false
     @State private var cacheCleared = false
     
-    private let appVersion = "0.1.14"
+    private let appVersion = "0.2.0"
     
     var body: some View {
         ZStack {
@@ -73,35 +72,10 @@ struct SettingsView: View {
                     
                     SettingCard(title: "关于毛球播放器", subtitle: "MaoqiuPlayer \(appVersion)")
                     
-                    // 清空最近播放
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("清空最近播放")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text("删除所有播放记录")
-                                .font(.system(size: 13))
-                                .foregroundColor(Color(hex: 0xaeb4bd))
-                        }
-                        Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { false },
-                            set: { newValue in
-                                if newValue { showClearRecentAlert = true }
-                            }
-                        ))
-                        .tint(AppTheme.accent)
-                    }
-                    .padding(14)
-                    .background(Color(hex: 0x212224))
-                    .cornerRadius(10)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color(hex: 0x2d3036), lineWidth: 1)
-                    )
-                    .padding(.top, 10)
                 }
                 .padding(18)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationBarHidden(true)
@@ -113,14 +87,6 @@ struct SettingsView: View {
             }
         } message: {
             Text("将删除媒体包临时播放文件")
-        }
-        .alert("清空最近播放", isPresented: $showClearRecentAlert) {
-            Button("取消", role: .cancel) {}
-            Button("清空", role: .destructive) {
-                store.clearRecent()
-            }
-        } message: {
-            Text("确定要清空所有播放记录吗？")
         }
         .overlay {
             if cacheCleared {
@@ -183,6 +149,8 @@ struct AdvancedToolsView: View {
                         .padding(.top, 10)
                 }
                 .padding(18)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationBarHidden(true)

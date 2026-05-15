@@ -22,14 +22,14 @@ def _image(width: int, height: int) -> QImage:
     return image
 
 
-def test_fit_to_window_does_not_upscale_small_images() -> None:
+def test_fit_to_window_upscales_small_images() -> None:
     _app()
     canvas = ImageCanvas()
     canvas.set_viewport_size(QSize(800, 600))
     canvas.set_image(_image(80, 60))
     canvas.set_fit_to_window(True)
 
-    assert round(canvas.effective_zoom_percent()) == 100
+    assert round(canvas.effective_zoom_percent()) > 100
 
 
 def test_fit_to_window_scales_down_large_images() -> None:

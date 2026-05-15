@@ -50,6 +50,24 @@ def test_media_package_roundtrip(tmp_path) -> None:
     assert extracted[0].read_bytes() == b"fake image bytes"
 
 
+def test_media_package_roundtrip_extracts_multiple_media(tmp_path) -> None:
+    photo = tmp_path / "photo.jpg"
+    video = tmp_path / "clip.mp4"
+    photo.write_bytes(b"fake image bytes")
+    video.write_bytes(b"fake video bytes")
+    output = tmp_path / "album.mqp"
+
+    info = create_media_package([photo, video], output, package_name="album")
+
+    assert info.item_count == 2
+    assert [item["name"] for item in info.items] == ["photo.jpg", "clip.mp4"]
+
+    extracted = extract_media_package(output, tmp_path / "cache")
+
+    assert [path.name for path in extracted] == ["photo.jpg", "clip.mp4"]
+    assert [path.read_bytes() for path in extracted] == [b"fake image bytes", b"fake video bytes"]
+
+
 def test_encryptor_lite_single_media_file_roundtrip(tmp_path) -> None:
     packed = tmp_path / "photo.anything"
     _write_lite_container(packed, "photo.jpg", b"fake encrypted photo", ENCRYPTOR_LITE_PAYLOAD_FILE)

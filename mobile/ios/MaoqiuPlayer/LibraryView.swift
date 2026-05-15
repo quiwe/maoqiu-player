@@ -15,6 +15,8 @@ struct LibraryView: View {
     @State private var showPHPicker = false
     @State private var showScanAlert = false
     @State private var videoItem: MediaItem?
+    @State private var videoPlaylist: [MediaItem] = []
+    @State private var videoInitialIndex = 0
     @State private var imageSet: ImageSet?
     
     private var filtered: [MediaItem] {
@@ -77,6 +79,8 @@ struct LibraryView: View {
                     }
                 }
                 .padding(18)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationBarHidden(true)
@@ -85,11 +89,11 @@ struct LibraryView: View {
             query = initialQuery
         }
         .fullScreenCover(item: $videoItem) { item in
-            VideoPlayerView(item: item, playlist: filtered.filter { $0.kind == .video }, initialIndex: 0)
+            VideoPlayerView(item: item, playlist: videoPlaylist.isEmpty ? [item] : videoPlaylist, initialIndex: videoInitialIndex)
                 .environmentObject(store)
         }
         .fullScreenCover(item: $imageSet) { set in
-            ImageViewerView(items: set.items, initialIndex: 0)
+            ImageViewerView(items: set.items, initialIndex: set.initialIndex)
                 .environmentObject(store)
         }
         .fileImporter(
@@ -128,28 +132,37 @@ struct LibraryView: View {
     }
     
     private func openItem(_ item: MediaItem) {
-        store.addToRecent(item)
         switch item.kind {
-        case .video: videoItem = item
+        case .video:
+            let videos = filtered.filter { $0.kind == .video }
+            videoPlaylist = videos.isEmpty ? [item] : videos
+            videoInitialIndex = videoPlaylist.firstIndex(of: item) ?? 0
+            videoItem = item
         case .image:
             let images = filtered.filter { $0.kind == .image }
             let idx = images.firstIndex(of: item) ?? 0
             let imageList = images.isEmpty ? [item] : images
-            imageSet = ImageSet(items: imageList)
+            imageSet = ImageSet(items: imageList, initialIndex: idx)
         case .mpackage: path.append(NavDestination.packageDetail(item))
         default: break
         }
     }
     
     private func handleFile(_ url: URL) {
-        guard url.startAccessingSecurityScopedResource() else { return }
-        defer { url.stopAccessingSecurityScopedResource() }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+        }
         
         let name = url.lastPathComponent
         let kind: MediaKind = MQPPackage.isSupportedPackage(fileURL: url) ? .mpackage : classifyKind(fileName: name, mimeType: "")
         
         if kind == .mpackage {
             Task {
+                let taskAccessed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if taskAccessed { url.stopAccessingSecurityScopedResource() }
+                }
                 do {
                     let items = try MQPPackage.unpack(fileURL: url)
                     store.addAllToLibrary(items)

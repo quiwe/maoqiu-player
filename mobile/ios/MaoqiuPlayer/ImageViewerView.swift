@@ -19,16 +19,21 @@ struct ImageViewerView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            TabView(selection: $currentIndex) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    ZoomableScrollView(
-                        image: loadImage(from: item.uri)
-                    )
-                    .tag(index)
+            if items.isEmpty {
+                Text("没有图片")
+                    .foregroundColor(.white)
+            } else {
+                TabView(selection: $currentIndex) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                        ZoomableScrollView(
+                            image: loadImage(from: item.uri)
+                        )
+                        .tag(index)
+                    }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .ignoresSafeArea()
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea()
             
             // Top bar overlay
             if showBar {
@@ -71,7 +76,7 @@ struct ImageViewerView: View {
             if showBar { startHideTimer() }
         }
         .onAppear {
-            currentIndex = initialIndex
+            currentIndex = min(max(0, initialIndex), max(0, items.count - 1))
             startHideTimer()
         }
         .onChange(of: currentIndex) { _ in
@@ -80,7 +85,9 @@ struct ImageViewerView: View {
     }
     
     private var currentItem: MediaItem {
-        guard currentIndex >= 0 && currentIndex < items.count else { return items[0] }
+        guard currentIndex >= 0 && currentIndex < items.count else {
+            return MediaItem(uri: "", name: "图片查看", mimeType: "", kind: .image, source: "")
+        }
         return items[currentIndex]
     }
     
@@ -119,6 +126,7 @@ struct ZoomableScrollView: UIViewRepresentable {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFit
         imageView.tag = 100
+        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         scrollView.addSubview(imageView)
         
         context.coordinator.imageView = imageView
@@ -135,6 +143,8 @@ struct ZoomableScrollView: UIViewRepresentable {
         if let imageView = scrollView.viewWithTag(100) as? UIImageView {
             imageView.image = image
             imageView.frame = scrollView.bounds
+            scrollView.contentSize = scrollView.bounds.size
+            context.coordinator.centerImage(in: scrollView)
         }
     }
     
@@ -148,6 +158,10 @@ struct ZoomableScrollView: UIViewRepresentable {
         }
         
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerImage(in: scrollView)
+        }
+
+        func centerImage(in scrollView: UIScrollView) {
             guard let imageView = imageView else { return }
             let offsetX = max((scrollView.bounds.width - imageView.frame.width) / 2, 0)
             let offsetY = max((scrollView.bounds.height - imageView.frame.height) / 2, 0)
